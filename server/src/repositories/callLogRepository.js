@@ -1,6 +1,7 @@
 const WRITABLE = new Set([
   'patient_id', 'caller_number', 'outcome', 'draft_data', 'ended_reason', 'summary',
   'transcript', 'recording_url', 'started_at', 'ended_at', 'duration_seconds',
+  'recording_blob_path', 'recording_content_type', 'recording_size_bytes', 'recording_archived_at',
 ]);
 
 /**
@@ -35,6 +36,16 @@ export function createCallLogRepository(db) {
     async findById(callId) {
       const { rows } = await db.query('SELECT * FROM call_logs WHERE call_id = $1', [callId]);
       return rows[0] ?? null;
+    },
+
+    /** Calls whose recording exists on Vapi but hasn't been archived yet. */
+    async listUnarchivedRecordings(limit = 50) {
+      const { rows } = await db.query(
+        `SELECT * FROM call_logs WHERE recording_url IS NOT NULL AND recording_blob_path IS NULL
+         ORDER BY created_at DESC LIMIT $1`,
+        [limit],
+      );
+      return rows;
     },
 
     async listByPatient(patientId) {

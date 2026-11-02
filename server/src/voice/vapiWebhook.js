@@ -10,7 +10,7 @@
 //   response: HTTP 200 { results: [{ toolCallId, result: "<string>" }] }
 // Vapi ignores non-200 responses, so tool failures are reported inside `result`.
 
-export function createVapiWebhookHandler({ toolHandlers, callLogService, logger }) {
+export function createVapiWebhookHandler({ toolHandlers, callLogService, logger, runInBackground = (p) => void p }) {
   async function runToolCall(toolCall, ctx) {
     const name = toolCall.function?.name ?? toolCall.name;
     const args = parseArguments(toolCall.function?.arguments ?? toolCall.arguments);
@@ -54,6 +54,9 @@ export function createVapiWebhookHandler({ toolHandlers, callLogService, logger 
       ended_at: endedAt,
       duration_seconds: duration,
     });
+    // Copy the audio into our own storage after responding; downloading a
+    // multi-MB file shouldn't hold up Vapi's webhook.
+    runInBackground(callLogService.archiveRecording(ctx.callId));
     return { ok: true };
   }
 

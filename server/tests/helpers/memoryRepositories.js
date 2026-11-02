@@ -85,6 +85,9 @@ export function createMemoryRepositories() {
     async listByPatient(patientId) {
       return [...callLogs.values()].filter((c) => c.patient_id === patientId);
     },
+    async listUnarchivedRecordings(limit = 50) {
+      return [...callLogs.values()].filter((c) => c.recording_url && !c.recording_blob_path).slice(0, limit);
+    },
     async listRecent({ limit, offset, outcome }) {
       return [...callLogs.values()]
         .filter((c) => !outcome || c.outcome === outcome)

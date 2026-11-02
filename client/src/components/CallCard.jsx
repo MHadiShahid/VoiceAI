@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { OutcomeBadge } from './ui.jsx';
-import { formatDateTime, formatDuration, formatPhone } from '../lib/format.js';
+import { formatDateTime, formatDuration, formatPhone, formatSize } from '../lib/format.js';
 
 /** One phone call: outcome, summary, and an expandable transcript. */
 export function CallCard({ call, showPatient = false }) {
   const [open, setOpen] = useState(false);
+  const recordingSrc = `/api/calls/${encodeURIComponent(call.call_id)}/recording`;
   const draftEntries = call.outcome === 'incomplete' && call.draft_data ? Object.entries(call.draft_data) : [];
 
   return (
@@ -45,12 +46,19 @@ export function CallCard({ call, showPatient = false }) {
             {open ? 'Hide transcript' : 'Show transcript'}
           </button>
         )}
-        {call.recording_url && (
-          <a className="btn btn-sm" href={call.recording_url} target="_blank" rel="noreferrer">
-            Recording ↗
-          </a>
-        )}
       </div>
+
+      {(call.recording_stored || call.recording_url) && (
+        <div className="recording">
+          {/* Served by our API: streamed from private storage, or redirected to Vapi if not archived yet. */}
+          <audio controls preload="none" src={recordingSrc} aria-label="Call recording" />
+          <span className="muted small">
+            {call.recording_stored
+              ? `Stored recording${call.recording_size_bytes ? ` · ${formatSize(call.recording_size_bytes)}` : ''}`
+              : 'Archiving recording…'}
+          </span>
+        </div>
+      )}
 
       {open && call.transcript && (
         <div className="transcript">

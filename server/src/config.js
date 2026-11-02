@@ -20,6 +20,12 @@ export const config = Object.freeze({
   // browser (it is restricted to our assistant + origins by vapi:setup).
   vapiPublicKey: env.VAPI_PUBLIC_KEY ?? '',
   vapiAssistantId: env.VAPI_ASSISTANT_ID ?? '',
+  // Private Vercel Blob store for archived call recordings (injected by Vercel
+  // when the store is linked to the project; recordings fall back to Vapi's URL without it).
+  blobToken: env.BLOB_READ_WRITE_TOKEN ?? '',
+  // Private Vapi API key: used at runtime only to download call recordings
+  // (Vapi serves them via short-lived presigned URLs).
+  vapiApiKey: env.VAPI_API_KEY ?? '',
   clinicTimezone: env.CLINIC_TIMEZONE || 'America/New_York',
   logLevel: env.LOG_LEVEL ?? 'info',
 });

@@ -16,6 +16,9 @@ export function toCallLogDto(row) {
     summary: row.summary ?? null,
     transcript: row.transcript ?? null,
     recording_url: row.recording_url ?? null,
+    // Archived copy in our private Blob store, streamed via /api/calls/:id/recording.
+    recording_stored: Boolean(row.recording_blob_path),
+    recording_size_bytes: row.recording_size_bytes === null || row.recording_size_bytes === undefined ? null : Number(row.recording_size_bytes),
     started_at: row.started_at ? new Date(row.started_at).toISOString() : null,
     ended_at: row.ended_at ? new Date(row.ended_at).toISOString() : null,
     duration_seconds: row.duration_seconds === null || row.duration_seconds === undefined ? null : Number(row.duration_seconds),
@@ -27,8 +30,77 @@ export function toCallLogDto(row) {
  * Call bookkeeping: partial drafts while a call is in flight, the patient a
  * call produced, and the transcript/summary once Vapi reports the call ended.
  */
-export function createCallLogService({ callLogRepository, logger }) {
+export function createCallLogService({ callLogRepository, recordingSource, recordingStore, logger }) {
+  const archivingEnabled = () => Boolean(recordingStore?.enabled && recordingSource?.available);
+
+  async function archiveRow(row) {
+    const file = await recordingSource.download(row.call_id);
+    const saved = await recordingStore.save(row.call_id, file);
+    await callLogRepository.upsert(row.call_id, {
+      recording_blob_path: saved.pathname,
+      recording_content_type: saved.contentType,
+      recording_size_bytes: saved.size,
+      recording_archived_at: new Date(),
+    });
+    logger.info('call.recording.archived', { call_id: row.call_id, pathname: saved.pathname, size_bytes: saved.size });
+    return saved;
+  }
+
   return {
+    /**
+     * Copy the call's recording from Vapi into our private Blob store.
+     * Runs in the background after the end-of-call report; never throws
+     * (a failure is logged and can be retried with `npm run recordings:archive`).
+     */
+    async archiveRecording(callId) {
+      if (!archivingEnabled()) return { archived: false, reason: 'storage_disabled' };
+      try {
+        const row = await callLogRepository.findById(callId);
+        if (!row?.recording_url) return { archived: false, reason: 'no_recording' };
+        if (row.recording_blob_path) return { archived: false, reason: 'already_archived' };
+        await archiveRow(row);
+        return { archived: true };
+      } catch (error) {
+        logger.error('call.recording.archive_failed', { call_id: callId, error });
+        return { archived: false, reason: 'error' };
+      }
+    },
+
+    /** Archive every recording not yet copied (backfill / retry). */
+    async archivePendingRecordings({ limit = 50 } = {}) {
+      if (!archivingEnabled()) throw new Error('Recording archiving needs BLOB_READ_WRITE_TOKEN and VAPI_API_KEY.');
+      const rows = await callLogRepository.listUnarchivedRecordings(limit);
+      const results = [];
+      for (const row of rows) {
+        try {
+          const saved = await archiveRow(row);
+          results.push({ call_id: row.call_id, archived: true, size_bytes: saved.size });
+        } catch (error) {
+          logger.error('call.recording.archive_failed', { call_id: row.call_id, error });
+          results.push({ call_id: row.call_id, archived: false, error: error.message });
+        }
+      }
+      return results;
+    },
+
+    /**
+     * Short-lived URL for a call's audio: our archived copy if present,
+     * otherwise Vapi's presigned URL while archiving is still pending.
+     * @returns {Promise<{ url: string, source: 'archive' | 'vapi' }>}
+     */
+    async recordingUrl(callId) {
+      const row = await callLogRepository.findById(callId);
+      if (!row) throw new NotFoundError(`Call ${callId} not found.`);
+      if (row.recording_blob_path && recordingStore?.enabled) {
+        return { url: await recordingStore.signedUrl(row.recording_blob_path), source: 'archive' };
+      }
+      if (row.recording_url && recordingSource?.available) {
+        const url = await recordingSource.presignedUrl(callId);
+        if (url) return { url, source: 'vapi' };
+      }
+      throw new NotFoundError('This call has no recording.');
+    },
+
     /** Merge newly collected (validated) fields into the call's draft. */
     async saveDraft(callId, { callerNumber, fields }) {
       if (!callId) return null;

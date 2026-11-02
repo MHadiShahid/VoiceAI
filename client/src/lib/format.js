@@ -31,6 +31,11 @@ export function timeAgo(iso) {
   return `${Math.round(hours / 24)} d ago`;
 }
 
+export function formatSize(bytes) {
+  if (!bytes) return '';
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+}
+
 export function formatDuration(seconds) {
   if (seconds === null || seconds === undefined) return '—';
   const s = Math.round(seconds);

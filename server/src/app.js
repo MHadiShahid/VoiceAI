@@ -19,7 +19,23 @@ import { errorHandler, notFoundHandler, requestLogger, vapiAuth } from './middle
  *                    ├─> services/ (use-cases + validation) ─> repositories/ (SQL)
  *   voice/ (Vapi)  ──┘
  */
-export function createApp({ repositories, logger, config, healthCheck = async () => {}, now }) {
+/**
+ * @param {object} deps
+ * @param {{ available: boolean, download: Function, presignedUrl: Function }} [deps.recordingSource] Vapi recordings
+ * @param {{ enabled: boolean, save: Function, open: Function }} [deps.recordingStore] archived call audio
+ * @param {(promise: Promise<unknown>) => void} [deps.runInBackground] keeps work alive after the
+ *   response is sent (Vercel's waitUntil in production)
+ */
+export function createApp({
+  repositories,
+  logger,
+  config,
+  healthCheck = async () => {},
+  now,
+  recordingSource = { available: false },
+  recordingStore = { enabled: false },
+  runInBackground = (promise) => void promise.catch(() => {}),
+}) {
   const patientService = createPatientService({ patientRepository: repositories.patients, logger });
   const appointmentService = createAppointmentService({
     appointmentRepository: repositories.appointments,
@@ -28,7 +44,12 @@ export function createApp({ repositories, logger, config, healthCheck = async ()
     logger,
     now,
   });
-  const callLogService = createCallLogService({ callLogRepository: repositories.callLogs, logger });
+  const callLogService = createCallLogService({
+    callLogRepository: repositories.callLogs,
+    recordingSource,
+    recordingStore,
+    logger,
+  });
   const toolHandlers = createToolHandlers({ patientService, appointmentService, callLogService, logger });
 
   const app = express();
@@ -45,7 +66,7 @@ export function createApp({ repositories, logger, config, healthCheck = async ()
     '/vapi/webhook',
     express.json({ limit: '2mb' }),
     vapiAuth({ secret: config.vapiWebhookSecret, isProduction: config.isProduction, logger }),
-    createVapiWebhookHandler({ toolHandlers, callLogService, logger }),
+    createVapiWebhookHandler({ toolHandlers, callLogService, logger, runInBackground }),
   );
 
   api.use(express.json({ limit: '100kb' }));

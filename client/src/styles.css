@@ -177,3 +177,5 @@ input[aria-invalid='true'], select[aria-invalid='true'] { border-color: var(--da
 .voice-note { font-size: 0.75rem; text-align: center; margin: 0; }
 .voice-widget .alert { margin: 0; }
 @keyframes pulse { 50% { opacity: 0.35; } }
+.recording { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.recording audio { height: 36px; max-width: 100%; }

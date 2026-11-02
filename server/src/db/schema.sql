@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS call_logs (
   updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
+-- Archived copy of the call recording in our private Vercel Blob store.
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS recording_blob_path    TEXT;
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS recording_content_type VARCHAR(100);
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS recording_size_bytes   BIGINT CHECK (recording_size_bytes >= 0);
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS recording_archived_at  TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS call_logs_patient_idx ON call_logs (patient_id);
 CREATE INDEX IF NOT EXISTS call_logs_created_idx ON call_logs (created_at DESC);
 

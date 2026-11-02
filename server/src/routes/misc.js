@@ -8,6 +8,16 @@ export function callRoutes({ callLogService }) {
   const router = Router();
   router.get('/', async (req, res) => ok(res, await callLogService.listRecent(req.query)));
   router.get('/:id', async (req, res) => ok(res, await callLogService.get(req.params.id)));
+
+  // Call audio: redirect to a short-lived signed URL for the archived file in
+  // our private Blob store (or to Vapi's presigned URL if not archived yet).
+  // Usable directly as an <audio src>. Never cached: the target URL expires.
+  router.get('/:id/recording', async (req, res) => {
+    const { url, source } = await callLogService.recordingUrl(req.params.id);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Recording-Source', source);
+    res.redirect(302, url);
+  });
   return router;
 }
 

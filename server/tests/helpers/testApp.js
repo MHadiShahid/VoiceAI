@@ -4,7 +4,49 @@ import { createMemoryRepositories } from './memoryRepositories.js';
 
 export const WEBHOOK_SECRET = 'test-secret';
 
-export function buildTestApp({ repositories = createMemoryRepositories(), now } = {}) {
+/** Fake Vapi recording source: "downloads" deterministic bytes per call. */
+export function createFakeRecordingSource() {
+  return {
+    available: true,
+    failNextDownload: false,
+    async presignedUrl(callId) {
+      return `https://signed.example/${callId}.mp3?sig=abc`;
+    },
+    async download(callId) {
+      if (this.failNextDownload) {
+        this.failNextDownload = false;
+        throw new Error('download failed');
+      }
+      return { body: Buffer.from(`audio-for:${callId}`), contentType: 'audio/mpeg', format: 'mp3' };
+    },
+  };
+}
+
+/** In-memory stand-in for the private Blob recording store. */
+export function createMemoryRecordingStore() {
+  const files = new Map();
+  return {
+    enabled: true,
+    files,
+    async save(callId, { body, contentType, format }) {
+      const pathname = `recordings/${callId}.${format}`;
+      files.set(pathname, body);
+      return { pathname, contentType, size: body.length };
+    },
+    async signedUrl(pathname) {
+      return `https://blob.example/${pathname}?signed=1`;
+    },
+  };
+}
+
+export function buildTestApp({
+  repositories = createMemoryRepositories(),
+  now,
+  recordingSource = createFakeRecordingSource(),
+  recordingStore = createMemoryRecordingStore(),
+} = {}) {
+  // Background jobs are collected so tests can await them deterministically.
+  const background = [];
   const app = createApp({
     repositories,
     logger: createLogger({ level: 'silent' }),
@@ -17,8 +59,12 @@ export function buildTestApp({ repositories = createMemoryRepositories(), now } 
       vapiAssistantId: 'asst-1',
     },
     now,
+    recordingSource,
+    recordingStore,
+    runInBackground: (promise) => background.push(promise),
   });
-  return { app, repositories };
+  const flushBackground = () => Promise.all(background.splice(0));
+  return { app, repositories, recordingSource, recordingStore, flushBackground };
 }
 
 export const validPatient = () => ({

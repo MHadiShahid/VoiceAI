@@ -96,7 +96,8 @@ export function buildAssistantConfig({ serverUrl, webhookSecret, geminiModel = D
     backgroundSound: 'off',
     endCallPhrases: ['have a great day', 'que tenga un buen día'],
 
-    artifactPlan: { recordingEnabled: true },
+    // MP3 keeps archived recordings small (WAV is roughly 10x larger).
+    artifactPlan: { recordingEnabled: true, recordingFormat: 'mp3' },
 
     server,
     serverMessages: ['tool-calls', 'end-of-call-report', 'status-update'],

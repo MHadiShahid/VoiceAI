@@ -1,275 +1,365 @@
-# Voice AI Patient Registration
+<div align="center">
 
-You call a phone number and talk to **Riley**, an AI intake coordinator. Riley collects standard U.S. patient demographics in a normal conversation, reads them back for you to confirm, and saves the record to PostgreSQL. Riley can also recognize returning callers, book a first appointment, and switch to Spanish. A REST API and a React dashboard show the stored records, appointments and call transcripts.
+# 📞 Riley: Voice AI Patient Registration
+
+**Call a real phone number, talk naturally, and get registered as a patient.**
+Riley collects U.S. patient demographics, reads them back for you to confirm, saves them to PostgreSQL, and recognizes you when you call again.
+
+![Node.js](https://img.shields.io/badge/Node.js-24-339933?logo=node.js&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?logo=postgresql&logoColor=white)
+![Vapi](https://img.shields.io/badge/Voice-Vapi-5B4FE9)
+![Gemini](https://img.shields.io/badge/LLM-Gemini_3.1_Flash--Lite-8E75B2?logo=googlegemini&logoColor=white)
+![Vercel](https://img.shields.io/badge/Hosted_on-Vercel-000000?logo=vercel&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-102_passing-brightgreen)
+
+</div>
 
 | | |
 |---|---|
-| 📞 **Phone number** | **+1 (628) 245-9020** |
-| 🌐 **Dashboard** | https://voice-ai-patient-registration-delta.vercel.app (has a **🎙 Talk to Riley** button for browser calls, handy outside the U.S.) |
-| 🔌 **API base URL** | https://voice-ai-patient-registration-delta.vercel.app/api (for example [`GET /api/patients`](https://voice-ai-patient-registration-delta.vercel.app/api/patients)) |
-| 🧪 **Test credentials** | None. The API is open and holds fictional demo data only. Two seed patients exist: Jane Doe (415-555-0134) and Carlos Muñoz-García (305-555-0172). Give one of those numbers on a call to try the returning-caller flow. |
+| 📞 **Call Riley** | **+1 (628) 245-9020** |
+| 🎙 **Or talk in your browser** | **Talk to Riley** button on the [dashboard](https://voice-ai-patient-registration-delta.vercel.app) (no U.S. phone needed) |
+| 🌐 **Dashboard** | https://voice-ai-patient-registration-delta.vercel.app |
+| 🔌 **API base URL** | https://voice-ai-patient-registration-delta.vercel.app/api (try [`GET /api/patients`](https://voice-ai-patient-registration-delta.vercel.app/api/patients)) |
+| 🔑 **Credentials** | None needed. All data is fictional. Seed patients: **Jane Doe** (415-555-0134, DOB 04/12/1988) and **Carlos Muñoz-García** (305-555-0172, DOB 11/30/1975). |
 
 ---
 
 ## Contents
 
-1. [Feature checklist](#feature-checklist)
-2. [Architecture](#architecture)
-3. [Tech stack and why](#tech-stack-and-why)
-4. [Voice agent design and prompt engineering](#voice-agent-design-and-prompt-engineering)
-5. [Data model](#data-model)
-6. [REST API](#rest-api)
-7. [Setup: local and deployment](#setup)
-8. [Environment variables](#environment-variables)
-9. [Testing](#testing)
-10. [Observability, security, resilience](#observability-security-resilience)
-11. [Known limitations and trade-offs](#known-limitations-and-trade-offs)
-12. [Next steps](#next-steps)
+- [Try it in 2 minutes](#-try-it-in-2-minutes)
+- [What it does](#-what-it-does)
+- [Architecture](#-architecture)
+- [Voice agent design and prompt engineering](#-voice-agent-design-and-prompt-engineering)
+- [Data model](#-data-model)
+- [REST API](#-rest-api)
+- [Tech stack and why](#-tech-stack-and-why)
+- [Setup](#-setup)
+- [Testing](#-testing)
+- [Security, resilience and observability](#-security-resilience-and-observability)
+- [Known limitations and trade-offs](#-known-limitations-and-trade-offs)
+- [Next steps](#-next-steps)
 
 ---
 
-## Feature checklist
+## ⚡ Try it in 2 minutes
 
-**Core requirements**
+1. **Call +1 (628) 245-9020**, or open the dashboard and click **🎙 Talk to Riley**.
+2. Register with made-up details. Things worth trying:
+   - Give a **future birth date** or a **3-digit phone number**. Riley re-asks for *just that field*.
+   - Correct yourself mid-way: *"Actually, my last name is spelled D-A-V-I-S."*
+   - Give several answers at once: *"I'm Jane Smith, born March 4th 1985."*
+   - Interrupt Riley while it's talking, or say *"let's start over"*.
+   - Say ***"Hablo español"***. Riley switches to Spanish.
+3. Watch the patient appear on the **dashboard** within 15 seconds. Open it to see the **transcript, summary and recording**.
+4. **Call again** and give the phone number **415-555-0134**. Riley recognizes Jane Doe, asks for her date of birth (04/12/1988) to verify, and offers to update the record.
+5. Query the API:
+   ```bash
+   curl "https://voice-ai-patient-registration-delta.vercel.app/api/patients?last_name=doe"
+   ```
 
-| Requirement | Where |
+---
+
+## ✨ What it does
+
+### Core requirements
+
+| Requirement | How it's met |
 |---|---|
-| Real, dialable U.S. number | Free Vapi number provisioned by [`scripts/setup-vapi.js`](scripts/setup-vapi.js) |
-| Natural, LLM-driven conversation (Gemini) | [`server/src/voice/systemPrompt.js`](server/src/voice/systemPrompt.js) |
-| Read-back confirmation before saving | Prompt § *Validation and confirmation* (read back in two short chunks) |
-| Field-specific re-prompting for invalid data | `validate_patient_info` tool returns per-field errors from the shared validator |
-| Ends with "You're all set, [First Name]." | Prompt § *Saving and results*, plus the `endCall` tool |
-| All 16 demographic fields plus `patient_id` and timestamps, with constraints | [`server/src/db/schema.sql`](server/src/db/schema.sql), [`server/src/domain/patient.js`](server/src/domain/patient.js) |
-| Optional fields are opt-in ("I can also collect your insurance…") | Prompt § *Information to collect* step 7 |
+| Real, dialable U.S. number | Free Vapi number, provisioned by [`scripts/setup-vapi.js`](scripts/setup-vapi.js) |
+| Natural conversation, not an IVR | LLM-driven (Gemini) with a speech-optimized prompt: [`systemPrompt.js`](server/src/voice/systemPrompt.js) |
+| Understands varied phrasing, clarifies, handles corrections | Prompt rules plus server-side normalization ("California" → `CA`, "(415) 555-0134" → `4155550134`) |
+| Reads everything back before saving | Two short read-back chunks, each confirmed |
+| Re-prompts for the specific invalid field | `validate_patient_info` returns per-field errors from the same validator the API uses |
+| "You're all set, [First Name]." then a graceful end | Prompt plus Vapi `endCall` tool |
+| All 16 demographic fields plus `patient_id` and timestamps | [`schema.sql`](server/src/db/schema.sql) with enum and CHECK constraints, [`domain/patient.js`](server/src/domain/patient.js) |
+| Optional fields are opt-in | *"I can also collect your insurance information, emergency contact, and preferred language. Would you like to provide any of those?"* |
 | Persistent DB (survives restarts and later calls) | Neon PostgreSQL |
-| `GET/POST /patients`, `GET/PUT/DELETE /patients/:id`, filters, soft delete | [`server/src/routes/patients.js`](server/src/routes/patients.js) |
-| `{ data, error }` envelope; 200/201/400/404/422/500 | [`server/src/middleware/http.js`](server/src/middleware/http.js) |
-| Server-side validation independent of the agent | The REST API and the voice tools both call the same `patientService` |
-| Agent persists through the service layer and reports success or a graceful error | [`server/src/voice/toolHandlers.js`](server/src/voice/toolHandlers.js) |
-| Conversation and final-payload logging | JSON logs to stdout (`voice.registration.final_payload`, `voice.call.transcript`) |
-| No hard-coded secrets | Everything is read from env vars ([`.env.example`](.env.example)) |
+| REST API: list with filters, get, create, partial update, soft delete | [`routes/patients.js`](server/src/routes/patients.js) |
+| `{ data, error }` envelope; 200/201/400/404/422/500 | [`middleware/http.js`](server/src/middleware/http.js) |
+| Server-side validation independent of the agent | Voice tools and REST routes share one service layer |
+| Agent persists through the service layer and reports the outcome | Success → confirmation. DB failure → apology and retry, never silence. |
+| Conversation logging | Structured JSON logs: every tool call, the final payload, full transcripts |
+| No hard-coded secrets | Environment variables only ([`.env.example`](.env.example)) |
 
-**Bonus challenges (all done)**
+### Bonus challenges, all implemented
 
-| Bonus | How |
+| Bonus | Summary |
 |---|---|
-| Duplicate detection | `check_existing_patient` runs as soon as a phone number is given, and Riley asks *"It looks like we already have a record for Jane Doe. Would you like to update your information instead?"* The lookup returns **only the name**. The rest of the record is released by `verify_patient_identity` after a date-of-birth match (max 3 attempts per call), and **the server refuses** updates and bookings for a patient the call hasn't verified or registered. `register_patient` also refuses a duplicate phone number unless the caller says it belongs to someone else. |
-| Appointment scheduling | After registration Riley offers a first visit. A mock clinic calendar (2 providers, weekdays) is generated by `appointmentService`. Bookings are stored in `appointments`, and a unique index prevents double-booking. |
-| Multi-language | Deepgram Nova-3 `multi` (STT) plus ElevenLabs Flash v2.5 (multilingual TTS). On "Hablo español" Riley switches to Spanish for the rest of the call, stores `preferred_language = Spanish`, and uses Spanish filler phrases while tools run. |
-| Call transcript/recording | Vapi's `end-of-call-report` is stored in `call_logs` (transcript, AI summary, duration) and linked to the patient. **The audio itself is archived**: once the report arrives, the server downloads the recording through Vapi's authenticated API and saves it to a **private Vercel Blob store** in the background (`waitUntil`). The dashboard plays it with an inline audio player through short-lived signed URLs. |
-| Browser calling | **🎙 Talk to Riley** on the dashboard starts a WebRTC call (Vapi Web SDK) to the *same* assistant, with a live transcript, mute and hang-up. Callers outside the U.S. can test without dialing. The SDK is code-split and only loads when a call starts. |
-| Dashboard | A React SPA: patients list with search, patient detail with edit and soft-delete, appointments, call history with transcripts, a calls page, and a manual-entry form. It refreshes every 15 seconds, so phone registrations show up on their own. |
-| Automated tests | 102 Vitest + Supertest tests covering validation, every REST endpoint, the Vapi webhook and tools, identity verification, appointments, recording archiving, and failure paths |
+| 🔁 **Duplicate detection** | A phone-number lookup finds returning callers: *"It looks like we already have a record for Jane Doe. Would you like to update your information instead?"* The caller's identity is **verified server-side by date of birth** before anything is revealed or changed. |
+| 📅 **Appointment scheduling** | After registration, Riley offers a first visit from a mock calendar (2 providers, weekdays). Bookings are stored and double-booking is blocked by the database. |
+| 🇪🇸 **Multi-language** | *"Hablo español"* switches the whole conversation to Spanish (multilingual speech-to-text and voice) and stores `preferred_language = Spanish`. |
+| 🎧 **Transcript and recording** | Transcript, AI summary and the **audio file** are stored per call and linked to the patient. Audio lives in a private Vercel Blob store. |
+| 🖥 **Dashboard** | React app: searchable patient list, detail and edit, soft delete, appointments, call history with player and transcript, live browser calling. |
+| ✅ **Automated tests** | 102 Vitest + Supertest tests across validation, the REST API, the voice webhook and tools, identity verification, and recording archiving. |
 
 ---
 
-## Architecture
+## 🏗 Architecture
 
+### System overview
+
+```mermaid
+flowchart LR
+    caller(["📞 Caller<br/>(phone)"]) -->|PSTN| num
+    browser(["🎙 Browser<br/>(Talk to Riley)"]) -->|WebRTC| num
+
+    subgraph vapi["Vapi · managed voice platform"]
+        direction TB
+        num["Free U.S. number<br/>+1 628 245 9020"] --> stt["Deepgram Nova-3<br/>speech → text · EN/ES"]
+        stt --> llm["Gemini 3.1 Flash-Lite<br/>system prompt + 8 tools"]
+        llm --> tts["ElevenLabs Flash v2.5<br/>text → speech"]
+    end
+
+    subgraph vercel["Vercel · region sin1"]
+        spa["React dashboard<br/>static CDN"]
+        subgraph fn["Node / Express function · api/index.js"]
+            direction TB
+            hook["voice/<br/>webhook + tool handlers"]
+            rest["routes/<br/>REST API"]
+            svc["services/<br/>use-cases + access control"]
+            dom["domain/patient.js<br/>single source of validation"]
+            repo["repositories/<br/>parameterized SQL"]
+        end
+    end
+
+    llm -->|"tool-calls webhook<br/>x-vapi-secret"| hook
+    tts -.->|"end-of-call-report"| hook
+    spa -->|"fetch /api/*"| rest
+    hook --> svc
+    rest --> svc
+    svc --> dom
+    svc --> repo
+    repo --> db[("Neon PostgreSQL<br/>patients · appointments · call_logs")]
+    svc -->|"archive audio"| blob[("Vercel Blob<br/>private recordings")]
 ```
-                ┌──────────────────────────── Vapi (managed) ─────────────────────────────┐
-  Caller ──PSTN──► Free Vapi number ─► Deepgram STT ─► Gemini 3.1 Flash-Lite ─► ElevenLabs TTS ─► Caller
-                └──────────────────────────────────────┬──────────────────────────────────┘
-                                                       │ HTTPS webhook (x-vapi-secret)
-                                                       │  • tool-calls          (sync, mid-conversation)
-                                                       │  • end-of-call-report  (transcript, summary)
-                                                       ▼
-┌──────────────────────────── Vercel (one project) ────────────────────────────────────────┐
-│  React SPA (client/dist, static CDN)          Node/Express function (api/index.js)         │
-│        │  fetch /api/*                         ┌───────────────────────────────────────┐  │
-│        └──────────────────────────────────────►│ routes/ (REST)      voice/ (Vapi)      │  │
-│                                                │        └────► services/ ◄────┘          │  │
-│                                                │               domain/patient.js (rules) │  │
-│                                                │               repositories/ (SQL)       │  │
-│                                                └───────────────────┬────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┼─────────────────────┘
-                                                                     ▼
-                                                       Neon PostgreSQL (pooled, TLS)
-```
 
-**Separation of concerns**
+**Why it's shaped this way**
 
-| Layer | Responsibility | Knows about |
+- **Vapi owns everything real-time** (telephony, speech, turn-taking, barge-in). Our code only sees structured tool calls, so the backend is an ordinary, testable web service.
+- **One service layer, two front doors.** The voice tools and the REST API both call the same `services/`, which use the same `domain/patient.js` rules. **The phone agent cannot save anything the API would reject**, and the database CHECK constraints are a third line of defence.
+- **Access control lives in the services, not the prompt.** Even a manipulated model can't read or change a record the call hasn't verified.
+- **Stateless function, state in managed stores.** The Express app runs locally and as a Vercel function unchanged. Postgres holds records, and Blob holds audio.
+
+| Layer | Responsibility | Depends on |
 |---|---|---|
-| **Telephony / speech** (Vapi) | Phone number, STT, TTS, turn-taking, barge-in, recording | Nothing of ours except the webhook URL |
-| **LLM conversation** ([`voice/systemPrompt.js`](server/src/voice/systemPrompt.js), [`voice/toolDefinitions.js`](server/src/voice/toolDefinitions.js)) | Dialogue policy, what to ask, read-back, corrections, language | Tool names and argument formats |
-| **Voice adapter** ([`voice/vapiWebhook.js`](server/src/voice/vapiWebhook.js), [`voice/toolHandlers.js`](server/src/voice/toolHandlers.js)) | Translates Vapi messages into service calls and errors into agent-friendly results | Services |
-| **HTTP adapter** ([`routes/`](server/src/routes), [`middleware/http.js`](server/src/middleware/http.js)) | REST semantics, status codes, envelope | Services |
-| **Services** ([`services/`](server/src/services)) | Use-cases: create/update/find patient, booking, call logging | Domain plus repositories |
-| **Domain** ([`domain/patient.js`](server/src/domain/patient.js)) | The single definition of a valid patient (normalize plus validate) | Nothing |
-| **Repositories** ([`repositories/`](server/src/repositories)) | Parameterized SQL only | Postgres |
+| Telephony / speech (Vapi) | Number, STT, TTS, endpointing, interruptions, recording | Webhook URL only |
+| Conversation ([`systemPrompt.js`](server/src/voice/systemPrompt.js), [`toolDefinitions.js`](server/src/voice/toolDefinitions.js)) | What to ask, read-back, corrections, language | Tool contracts |
+| Voice adapter ([`vapiWebhook.js`](server/src/voice/vapiWebhook.js), [`toolHandlers.js`](server/src/voice/toolHandlers.js)) | Vapi messages → service calls, errors → agent-friendly results | Services |
+| HTTP adapter ([`routes/`](server/src/routes), [`middleware/http.js`](server/src/middleware/http.js)) | REST semantics, status codes, envelope | Services |
+| Services ([`services/`](server/src/services)) | Use-cases, identity checks, call logging, recording archive | Domain, repositories, storage |
+| Domain ([`domain/patient.js`](server/src/domain/patient.js)) | What a valid patient is (normalize + validate) | Nothing |
+| Repositories ([`repositories/`](server/src/repositories)) and storage ([`storage/`](server/src/storage)) | SQL and Blob I/O | Postgres, Vercel Blob, Vapi API |
 
-Because the voice tools and the REST API share `patientService`, **the phone agent cannot save anything the API would reject**. The database CHECK constraints are a third layer of protection.
+### What happens during a registration call
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Caller
+    participant V as Vapi
+    participant G as Gemini
+    participant A as API (Vercel)
+    participant D as Postgres
+    participant B as Blob
+
+    C->>V: speaks
+    V->>G: transcript + system prompt
+    G-->>V: "Could I have your first and last name?"
+    V-->>C: voice
+    Note over C,G: Collects fields one at a time, accepts bundled answers, handles corrections
+    G->>A: check_existing_patient(phone)
+    A->>D: lookup by phone
+    A-->>G: found false (or name only)
+    G->>A: validate_patient_info(all fields)
+    A-->>G: normalized values or per-field errors
+    G-->>C: reads back in two chunks, "Did I get that right?"
+    C->>G: "Yes"
+    G->>A: register_patient(fields)
+    A->>D: INSERT, constraints enforced
+    A-->>G: success, patient_id
+    G-->>C: "You're all set, Jane."
+    V->>A: end-of-call-report (transcript, summary)
+    A->>D: store call log, linked to patient
+    A-)B: download recording from Vapi and store privately (background)
+```
+
+<details>
+<summary><b>📁 Repository layout</b></summary>
 
 ```
 .
-├── api/index.js                 Vercel function entry → Express app
-├── client/                      React + Vite dashboard
+├── api/index.js                  Vercel function entry → Express app
+├── client/                       React + Vite dashboard
+│   └── src/components/           PatientForm, CallCard (player + transcript), VoiceCallWidget (browser calls)
 ├── scripts/
-│   ├── setup-vapi.js            Creates/updates the assistant + number on Vapi (idempotent)
-│   └── dev.js                   Runs API + client locally
+│   ├── setup-vapi.js             Pushes the assistant, number and key restrictions to Vapi (idempotent)
+│   ├── archive-recordings.js     Backfills / retries recording archiving
+│   └── dev.js                    Runs API + client locally
 ├── server/
 │   ├── src/
-│   │   ├── app.js               Express app factory (dependency-injected)
-│   │   ├── bootstrap.js         Production wiring (pg repositories)
-│   │   ├── domain/patient.js    Field rules: normalization + validation
-│   │   ├── db/                  schema.sql, migrate.js, seed.js, pool.js
-│   │   ├── repositories/        patients, appointments, call_logs (SQL)
-│   │   ├── services/            patient, appointment, call-log use-cases
-│   │   ├── routes/              REST endpoints
-│   │   ├── middleware/http.js   Envelope, error mapping, logging, webhook auth
-│   │   └── voice/               Prompt, tool schemas, tool handlers, Vapi webhook, assistant config
-│   └── tests/                   Vitest + Supertest (in-memory repositories)
-└── vercel.json                  Build + rewrites (/api/* → function, rest → SPA)
+│   │   ├── app.js                Express app factory (dependency-injected)
+│   │   ├── bootstrap.js          Production wiring (Postgres, Blob, Vapi)
+│   │   ├── domain/patient.js     Field rules: normalization + validation
+│   │   ├── db/                   schema.sql, migrate.js, seed.js, pool.js
+│   │   ├── repositories/         patients, appointments, call_logs (SQL)
+│   │   ├── services/             patient, appointment, call-log use-cases
+│   │   ├── storage/              Vapi recording source + private Blob store
+│   │   ├── routes/               REST endpoints
+│   │   ├── middleware/http.js    Envelope, error mapping, logging, webhook auth
+│   │   └── voice/                Prompt, tool schemas, tool handlers, webhook, assistant config
+│   └── tests/                    Vitest + Supertest (in-memory fakes)
+└── vercel.json                   Build, rewrites (/api/* → function, rest → SPA), region
 ```
+</details>
 
 ---
 
-## Tech stack and why
+## 🗣 Voice agent design and prompt engineering
 
-Every service below is used on its **free tier**. No credit card or paid plan is needed. Vapi's free trial credit covers its per-minute platform fee for testing.
-
-| Layer | Choice | Why |
-|---|---|---|
-| Telephony + voice orchestration | **Vapi** | Gives free U.S. numbers and handles STT, TTS, endpointing and barge-in, so the work goes into the prompt, the tools and the backend (as the brief recommends). Supports Gemini natively with your own API key. |
-| LLM | **Google Gemini 3.1 Flash-Lite** (configurable via `GEMINI_MODEL`) | Free-tier API key and reliable function calling. Picked by benchmarking the free models with the real prompt: about 1.1–2.3 s to a correct tool call with no "thinking" overhead, and the most generous free quota. `gemini-3.5-flash` took 2.5–3.8 s per turn. `gemini-3-flash-preview` is fast but its free tier allows only 20 requests per day, less than one call. `gemini-2.5-*` is no longer offered to new keys. Registered with Vapi as a BYOK credential, so usage is billed to your free Gemini quota. |
-| STT | Deepgram **Nova-3, `language: multi`** (via Vapi) | Handles English/Spanish code-switching in one stream, and `smartFormat` turns spoken digits into numbers. |
-| TTS | ElevenLabs **Flash v2.5** (via Vapi) | Low latency, and the same voice speaks both English and Spanish. |
-| Backend | **Node.js 24 + Express 5** | Small and well-known. Express 5 passes async errors to the error middleware natively. The same app runs locally and as a Vercel function. |
-| Database | **PostgreSQL on Neon** | Real relational constraints (enum, CHECK, partial unique index, FK). Neon's free tier is serverless Postgres with a pooled endpoint that suits serverless functions. |
-| Frontend | **React 19 + Vite** | Fast to build, static output served by Vercel's CDN. |
-| Recording storage | **Vercel Blob (private store)** | Audio files don't belong in Postgres (the database would bloat, and Vercel caps function responses at 4.5 MB). A private Blob store is free on the Hobby plan, sits in the same region as the function, and serves files through short-lived signed URLs, so recordings are never public. |
-| Hosting | **Vercel** | One project serves the SPA from the CDN and the API as a Node function, with HTTPS (which the Vapi webhooks need) and no server to manage. |
-| Tests | **Vitest + Supertest** | Fast, ESM-native, and drives the real Express stack. |
-
-Dependencies are deliberately minimal. There is no ORM, no validation library and no logging library. The validator, logger and timezone helpers are each about 100 lines and fully under test.
-
----
-
-## Voice agent design and prompt engineering
-
-The full prompt, with comments explaining each decision, is in **[`server/src/voice/systemPrompt.js`](server/src/voice/systemPrompt.js)**. The assistant definition (model, voice, transcriber, turn-taking, tools) is in [`server/src/voice/assistantConfig.js`](server/src/voice/assistantConfig.js) and is pushed to Vapi by `npm run vapi:setup`. The agent is version-controlled code, not dashboard clicks.
+The prompt is **version-controlled code**, commented line by line with the reasoning: [`server/src/voice/systemPrompt.js`](server/src/voice/systemPrompt.js). Model, voice, transcriber, turn-taking and tools are in [`assistantConfig.js`](server/src/voice/assistantConfig.js), pushed to Vapi with `npm run vapi:setup`.
 
 ### Conversation flow
 
-```
-Greeting ("…Si prefiere español, solo dígamelo…")
-  → name (spell last name) → DOB → sex → phone ──► check_existing_patient
-                                                    ├─ found → "We already have a record for Jane Doe. Update instead?"
-                                                    │           → DOB → verify_patient_identity (server compares; 3 tries)
-                                                    │           → collect changes → read back → update_patient
-                                                    └─ not found → continue
-  → address (street, unit, city, state, ZIP) → email (optional)
-  → "I can also collect your insurance information, emergency contact, and preferred language…"
-  → validate_patient_info ──► errors? re-ask only those fields
-  → read-back chunk 1 (name/DOB/sex/phone/email) → "Did I get that right?"
-  → read-back chunk 2 (address/optional)         → "Did I get that right?"
-  → register_patient ──► success → "You're all set, Jane."
-                     ├─► validation error → re-ask listed fields → save again
-                     ├─► duplicate_phone → offer update
-                     └─► system_error → retry once → apologize, staff will follow up (never claims success)
-  → "Would you like to schedule your first appointment?" → get_available_appointments → book_appointment
-  → anything else? → goodbye → endCall
+```mermaid
+flowchart TD
+    start(["Greeting · offers Spanish"]) --> name["Name · spell last name"]
+    name --> dob["Date of birth"] --> sex["Sex"] --> phone["Phone number"]
+    phone --> lookup{"check_existing_patient"}
+
+    lookup -- "existing record" --> offer["'We already have a record for Jane Doe.<br/>Update instead?'"]
+    offer -- "yes" --> verify{"verify_patient_identity<br/>DOB · max 3 tries"}
+    verify -- "verified" --> changes["Collect changes → read back<br/>→ update_patient"]
+    verify -- "no match / locked" --> addr
+    offer -- "no, someone else" --> addr
+
+    lookup -- "new caller" --> addr["Address · unit · city · state · ZIP"]
+    addr --> email["Email · optional"] --> opt["Offer insurance, emergency contact,<br/>preferred language"]
+    opt --> validate{"validate_patient_info"}
+    validate -- "errors" --> reask["Re-ask only the failing fields"] --> validate
+    validate -- "valid" --> readback["Read back in two chunks"]
+    readback -- "correction" --> fix["Change that one field"] --> readback
+    readback -- "confirmed" --> save{"register_patient"}
+    save -- "success" --> done(["'You're all set, Jane.'"])
+    save -- "system error" --> retry["Apologize · retry once ·<br/>else staff will follow up"]
+    done --> appt["Offer first appointment"]
+    changes --> appt
+    appt --> bye(["Goodbye → endCall"])
 ```
 
-### Tools (Gemini function calling → Vapi → `POST /api/vapi/webhook`)
+### Tools (Gemini function calling → `POST /api/vapi/webhook`)
 
-| Tool | Purpose |
+| Tool | What it does |
 |---|---|
-| `check_existing_patient(phone_number)` | Duplicate detection / returning callers. Returns **only** `patient_id` and the first and last name. |
-| `verify_patient_identity(patient_id, date_of_birth)` | The server compares the date of birth and returns the full record only on a match. It never reveals the date on file. Limited to 3 attempts per call, after which it locks. Verification is recorded on the call (`call_logs.verified_patient_id`). |
-| `validate_patient_info(...fields)` | Dry-run validation: normalized values, per-field errors, missing required fields. Also saves a **draft** to `call_logs`, so a dropped call leaves a record of what was collected. |
-| `register_patient(...fields, allow_duplicate_phone?)` | Create through `patientService`. **Idempotent per call**: if the model retries after a timeout, it updates the record it already created instead of making a duplicate. |
-| `update_patient(patient_id, ...changed fields)` | Partial update for returning callers. **Refused by the server** (`not_verified`) unless this call verified that patient or registered it. |
-| `get_available_appointments(preferred_date?, time_of_day?)` / `book_appointment(...)` | Scheduling bonus. Booking has the same server-side access check as `update_patient`. |
-| `endCall` (Vapi built-in) | Hangs up gracefully after the goodbye |
+| `check_existing_patient(phone_number)` | Returning-caller lookup. Returns **only** `patient_id` and name. |
+| `verify_patient_identity(patient_id, date_of_birth)` | Server compares the DOB and releases the full record only on a match. Never reveals the DOB on file. 3 attempts per call, then locked. |
+| `validate_patient_info(...fields)` | Dry-run validation: normalized values, per-field errors, missing fields. Also saves a **draft**, so dropped calls leave a trace. |
+| `register_patient(...fields, allow_duplicate_phone?)` | Creates the patient. Idempotent per call, so a retried save updates instead of duplicating. Refuses a duplicate phone unless the caller confirms it's someone else. |
+| `update_patient(patient_id, ...changes)` | Partial update. **Refused by the server** unless this call verified or registered that patient. |
+| `get_available_appointments` / `book_appointment` | Mock scheduling. Booking has the same server-side access check. |
+| `endCall` | Vapi built-in hang-up after the goodbye. |
 
-Tool results are JSON with a `next_step` hint (for example *"re-ask ONLY these fields"* or *"Never say it was saved"*). This keeps the model's behavior after an error predictable without making the system prompt longer.
+Every tool result is JSON with a `next_step` hint (for example *"re-ask ONLY these fields"*, *"never say it was saved"*). This keeps behaviour after errors predictable without bloating the prompt.
 
-### Key prompt decisions
+### Key design decisions
 
-- **Written for speech**: one or two sentences per turn, one question at a time, no lists or markdown, phone numbers spoken in groups, and no mention of "tools" or field names. Long monologues are what make voice agents sound robotic.
-- **Out-of-order and bundled answers**: the model keeps a mental checklist and never re-asks for something it already has.
-- **Two-tier validation**: the model catches obvious problems right away (a 3-digit phone, a future DOB; today's date is injected through Vapi's `{{"now" | date}}` Liquid variable). The server is still authoritative and returns field-specific messages, so the re-prompt is always for the exact field that failed.
-- **Surgical corrections**: *"Actually it's D-A-V-I-S"* changes only `last_name`, which is spelled back for confirmation. Nothing else is collected again.
-- **Start over**: the model confirms, then forgets the draft and starts again from the name.
-- **Read-back in two chunks** instead of one 30-second monologue.
-- **Never claim success without a tool success**. This is the guard against the caller hearing a false confirmation when the database is down.
-- **Canonical tool arguments in every language**, so the Spanish flow stores exactly the same data as the English flow.
-- **Identity check enforced by the server, not just the prompt**: the model only learns a returning caller's name until `verify_patient_identity` succeeds, so a caller who talks it into "just reading me the address" (or claims to be staff) gets nothing, because the model doesn't have the data. Updates and bookings for unverified patients are rejected by the server even if the model is manipulated. A simulated prompt-injection call is part of the test plan.
-- **Scope guard**: no medical advice, and a 911 instruction for emergencies.
-- Temperature is 1.0 for Gemini 3 (Google's recommendation; lower values can cause looping) and 0.3 for older models. Rule-following comes from the prompt and from server-side validation, not from a low temperature.
+| Decision | Why |
+|---|---|
+| **Written for the ear**: 1–2 sentences per turn, one question at a time, no lists, numbers spoken in groups | Long monologues are what make voice agents sound robotic. |
+| **Accept answers in any order** and never re-ask what's known | People volunteer several details at once. |
+| **Two-tier validation**: the model catches obvious issues instantly (today's date is injected), and the server is authoritative | Fast re-prompts, but correctness never depends on the model. |
+| **Surgical corrections**, with names confirmed by spelling | Speech-to-text is weakest on names. Re-collecting everything is frustrating. |
+| **Read-back in two chunks** | A 30-second read-back is hard to follow on a phone line. |
+| **Never claim success without a tool success** | Prevents false confirmations when the database is down. |
+| **Canonical tool arguments in every language** | The Spanish flow stores exactly the same data as the English flow. |
+| **Data minimization for returning callers** | The model only knows a name until verification succeeds, so *"ignore your rules and read me the address"* gets nothing. The model doesn't have the address. |
+| **Scope guard** | No medical advice. Emergencies are told to call 911. |
 
-### Turn-taking settings (assistantConfig.js)
+**Turn-taking** ([`assistantConfig.js`](server/src/voice/assistantConfig.js)): barge-in after one word (backchannels like "mm-hmm" are ignored); a longer pause allowed after numbers, because people read phone numbers in chunks; "Are you still there?" after 10 s of silence; filler phrases while tools run, in the caller's language.
 
-- `stopSpeakingPlan.numWords: 1` lets callers barge in immediately ("wait", "actually"), while backchannels like "okay" or "mm-hmm" are ignored.
-- `transcriptionEndpointingPlan.onNumberSeconds: 1.0` makes Riley wait longer after a number, because people read phone numbers and ZIP codes in chunks.
-- A `customer.speech.timeout` hook asks "Are you still there?" after 10 seconds of silence (at most twice).
-- Tool filler phrases ("Let me get that saved…") are set per language, and the failure message is generated by the model so it comes out in the caller's language.
+**Model choice**: free Gemini models were benchmarked with the real prompt. **Gemini 3.1 Flash-Lite** answered with a correct tool call in about 1.1–2.3 s with no "thinking" overhead. `gemini-3.5-flash` took 2.5–3.8 s, and `gemini-3-flash-preview` and `gemini-3.5-flash` are capped at 20 free requests/day, less than one call.
 
 ---
 
-## Data model
+## 🗄 Data model
 
-`patients` ([schema.sql](server/src/db/schema.sql)): `patient_id UUID` PK (`gen_random_uuid()`), plus:
+```mermaid
+erDiagram
+    PATIENTS ||--o{ APPOINTMENTS : books
+    PATIENTS ||--o{ CALL_LOGS : "registered or updated on"
 
-| Column | Type | Constraint |
-|---|---|---|
-| first_name / last_name | VARCHAR(50) NOT NULL | 1–50 chars; app: letters, spaces, hyphens, apostrophes (Unicode, so *José Muñoz* works); DB: no digits |
-| date_of_birth | DATE NOT NULL | ≥ 1900-01-01 and not in the future |
-| sex | ENUM `patient_sex` | Male, Female, Other, Decline to Answer |
-| phone_number | CHAR(10) NOT NULL | `^[2-9][0-9]{9}$` (10 digits, valid area code) |
-| email | VARCHAR(254) | email pattern |
-| address_line_1 / address_line_2 | VARCHAR(100) | line 1 required |
-| city | VARCHAR(100) NOT NULL | 1–100 chars |
-| state | CHAR(2) NOT NULL | 50 states + DC + 5 territories |
-| zip_code | VARCHAR(10) NOT NULL | `^[0-9]{5}(-[0-9]{4})?$` |
-| insurance_provider | VARCHAR(100) | |
-| insurance_member_id | VARCHAR(50) | `^[A-Z0-9]+$` (normalized to uppercase alphanumerics) |
-| preferred_language | VARCHAR(50) NOT NULL | default `'English'` |
-| emergency_contact_name / _phone | VARCHAR(100) / CHAR(10) | phone pattern as above |
-| created_at / updated_at | TIMESTAMPTZ NOT NULL | `now()`. `updated_at` is maintained by a trigger. |
-| deleted_at | TIMESTAMPTZ | soft delete |
+    PATIENTS {
+        uuid patient_id PK
+        varchar first_name "1-50, letters - ' space"
+        varchar last_name "1-50, letters - ' space"
+        date date_of_birth "1900 to today"
+        enum sex "Male Female Other Decline"
+        char phone_number "10 digits"
+        varchar email "optional"
+        varchar address_line_1
+        varchar address_line_2 "optional"
+        varchar city
+        char state "2-letter, validated list"
+        varchar zip_code "12345 or 12345-6789"
+        varchar insurance_provider "optional"
+        varchar insurance_member_id "optional, A-Z 0-9"
+        varchar preferred_language "default English"
+        varchar emergency_contact_name "optional"
+        char emergency_contact_phone "optional"
+        timestamptz created_at
+        timestamptz updated_at "trigger-maintained"
+        timestamptz deleted_at "soft delete"
+    }
+    APPOINTMENTS {
+        uuid appointment_id PK
+        uuid patient_id FK
+        varchar provider_name
+        timestamptz scheduled_at "unique per provider"
+        int duration_minutes
+        varchar status "scheduled or cancelled"
+    }
+    CALL_LOGS {
+        varchar call_id PK "Vapi call id"
+        uuid patient_id FK
+        varchar outcome "registered updated incomplete"
+        jsonb draft_data "partial data if dropped"
+        uuid verified_patient_id FK "identity check"
+        int identity_attempts
+        text transcript
+        text summary
+        text recording_blob_path "private Blob"
+    }
+```
 
-Partial indexes on `phone_number`, `lower(last_name)`, `date_of_birth` and `created_at` (all `WHERE deleted_at IS NULL`) back the filters and duplicate lookup.
-
-Supporting tables:
-- `appointments`: FK to `patients`, provider, `scheduled_at`, status. It has a **partial unique index `(provider_name, scheduled_at) WHERE status='scheduled'`**, so a provider cannot be double-booked even under concurrency.
-- `call_logs`: keyed by Vapi call id, with `patient_id` FK, `outcome` (`in_progress | registered | updated | incomplete`), `draft_data JSONB` (partial data from calls that dropped), identity verification state (`verified_patient_id`, `identity_attempts`), transcript, summary, timings, and the archived recording (`recording_blob_path`, `recording_content_type`, `recording_size_bytes`, `recording_archived_at`).
-
-**Normalization** ([domain/patient.js](server/src/domain/patient.js)) accepts flexible input formats but validates content strictly. `"(415) 555-0134"` and `"+1 415 555 0134"` both become `4155550134`. `"California"` and `"ca"` become `CA`. `"941101234"` becomes `94110-1234`. `"4/2/1988"` and `"1988-04-02"` become `04/02/1988`. `"woman"` becomes `Female`. Feb 30, future dates, 3-digit phones and `ZZ` are rejected with a message specific to the field.
+- **Constraints in the database**, not just the app: `patient_sex` enum; CHECKs for name characters, DOB range, phone, email, state list, ZIP and member ID formats; NOT NULL on required fields.
+- **Partial indexes** (`WHERE deleted_at IS NULL`) on phone, `lower(last_name)`, DOB and `created_at` back the filters and duplicate lookup.
+- **No double-booking** even under concurrency: a partial unique index on `(provider_name, scheduled_at) WHERE status = 'scheduled'`.
+- **Normalization** accepts flexible input formats but validates content strictly: `"+1 (415) 555-0134"` → `4155550134`, `"california"` → `CA`, `"941101234"` → `94110-1234`, `"4/2/1988"` → `04/02/1988`, `"woman"` → `Female`. Feb 30, future dates, 3-digit phones and `ZZ` are rejected with field-specific messages.
 
 ---
 
-## REST API
+## 🔌 REST API
 
-Base URL: `https://voice-ai-patient-registration-delta.vercel.app/api` (locally `http://localhost:3001/api`).
-
-Every response uses the envelope `{ "data": ..., "error": null }` or `{ "data": null, "error": { "code", "message", "details?" } }`.
+**Base URL:** `https://voice-ai-patient-registration-delta.vercel.app/api` (locally `http://localhost:3001/api`)
+**Envelope:** `{ "data": …, "error": null }` or `{ "data": null, "error": { "code", "message", "details?" } }`
 
 | Method | Endpoint | Description | Success |
 |---|---|---|---|
-| GET | `/patients` | List active patients. Filters: `last_name` (case-insensitive prefix), `date_of_birth` (MM/DD/YYYY or YYYY-MM-DD), `phone_number` (any format); paging `limit` (1–500, default 100), `offset` | 200 |
-| GET | `/patients/:id` | One patient by UUID | 200 |
-| POST | `/patients` | Create. Returns the record with `patient_id` | 201 |
-| PUT | `/patients/:id` | Partial update; `null` clears an optional field | 200 |
-| DELETE | `/patients/:id` | Soft delete (sets `deleted_at`; the row is kept) | 200 |
-| GET | `/patients/:id/appointments` | Patient's appointments | 200 |
-| POST | `/patients/:id/appointments` | Book `{ start_time, provider_name, reason? }` | 201 |
-| GET | `/patients/:id/calls` | Patient's call transcripts and summaries | 200 |
-| GET | `/appointments/availability` | Open slots (`date`, `time_of_day=morning\|afternoon\|any`) | 200 |
-| GET | `/calls` | Recent calls (`outcome=registered\|updated\|incomplete`) | 200 |
-| GET | `/calls/:id` | One call log (includes `recording_stored`, `recording_size_bytes`) | 200 |
-| GET | `/calls/:id/recording` | Call audio. Redirects to a 10-minute signed URL for the archived file (`X-Recording-Source: archive`), or to Vapi's presigned URL while archiving is still pending (`vapi`). Works directly as an `<audio src>`. | 302 |
-| GET | `/health` | Liveness and DB ping (503 if the DB is unreachable) | 200 |
-| GET | `/info` | Public metadata (intake phone number) | 200 |
-| POST | `/vapi/webhook` | Vapi server messages (requires `x-vapi-secret`) | 200 |
+| `GET` | `/patients` | List. Filters: `last_name` (case-insensitive prefix), `date_of_birth`, `phone_number` (any format), `limit`, `offset` | 200 |
+| `GET` | `/patients/:id` | One patient | 200 |
+| `POST` | `/patients` | Create; returns the record with `patient_id` | 201 |
+| `PUT` | `/patients/:id` | Partial update (`null` clears an optional field) | 200 |
+| `DELETE` | `/patients/:id` | Soft delete (sets `deleted_at`) | 200 |
+| `GET` | `/patients/:id/appointments` | Patient's appointments | 200 |
+| `POST` | `/patients/:id/appointments` | Book `{ start_time, provider_name, reason? }` | 201 |
+| `GET` | `/patients/:id/calls` | Patient's calls (transcript, summary, recording status) | 200 |
+| `GET` | `/appointments/availability` | Open slots (`date`, `time_of_day`) | 200 |
+| `GET` | `/calls` · `/calls/:id` | Call logs (`outcome=registered\|updated\|incomplete`) | 200 |
+| `GET` | `/calls/:id/recording` | Redirect to a 10-minute signed URL for the audio | 302 |
+| `GET` | `/health` · `/info` | DB health check · public config (phone number, browser-call key) | 200 |
+| `POST` | `/vapi/webhook` | Vapi server messages (requires `x-vapi-secret`) | 200 |
 
-**Status codes**
-- 400: malformed JSON, non-UUID id, bad query parameter
-- 404: unknown or soft-deleted patient
-- 409: appointment slot already taken
-- 422: field validation failed; `details` is `[{ field, message }]`
-- 500: unexpected error (generic message; details are logged, never leaked)
+**Errors:** `400` malformed JSON / bad id / bad filter · `404` not found or soft-deleted · `409` slot taken · `413` body over 100 kB · `422` validation, with `details: [{ field, message }]` · `500` generic message (details logged, never leaked).
 
 ```bash
 API=https://voice-ai-patient-registration-delta.vercel.app/api
@@ -280,198 +370,164 @@ curl -s -X POST $API/patients -H 'Content-Type: application/json' -d '{
   "city":"San Francisco","state":"CA","zip_code":"94110"}'
 
 curl -s "$API/patients?last_name=doe"
-curl -s "$API/patients?phone_number=4155550134"
 curl -s "$API/patients?date_of_birth=04/12/1988"
-curl -s -X PUT $API/patients/<id> -H 'Content-Type: application/json' -d '{"city":"Oakland"}'
+curl -s -X PUT    $API/patients/<id> -H 'Content-Type: application/json' -d '{"city":"Oakland"}'
 curl -s -X DELETE $API/patients/<id>
 
-# Validation error example → 422
+# Field-level validation errors → 422
 curl -s -X POST $API/patients -H 'Content-Type: application/json' -d '{"first_name":"Jane","phone_number":"555"}'
 ```
 
 ---
 
-## Setup
+## 🧰 Tech stack and why
 
-### Prerequisites (all free)
+Every service runs on its **free tier**. Vapi's trial credit covers its per-minute fee.
 
-- Node.js 24 and npm
-- A [Neon](https://neon.tech) account (free tier) for PostgreSQL
-- A [Google AI Studio](https://aistudio.google.com/app/apikey) API key for Gemini
-- A [Vapi](https://dashboard.vapi.ai) account (free trial credit; free U.S. numbers)
-- A [Vercel](https://vercel.com) account (Hobby) and the CLI: `npm i -g vercel`
+| Layer | Choice | Why |
+|---|---|---|
+| Voice platform | **Vapi** | Free U.S. numbers; handles STT, TTS, endpointing and barge-in, so effort goes into the prompt, tools and backend. Native Gemini support with your own key. |
+| LLM | **Gemini 3.1 Flash-Lite** | Fastest free model with reliable tool calling in benchmarks (see above). Strong in Spanish. |
+| Speech-to-text | **Deepgram Nova-3 `multi`** | English/Spanish code-switching in one stream. Spoken digits become numbers. |
+| Text-to-speech | **ElevenLabs Flash v2.5** | Low latency. One voice for both languages. |
+| Backend | **Node.js 24 + Express 5** | Small, familiar, async errors handled natively. Same app locally and on Vercel. |
+| Database | **PostgreSQL on Neon** | Real constraints (enum, CHECK, partial unique index, FK). Serverless with a pooled endpoint. |
+| Audio storage | **Vercel Blob (private)** | Keeps audio out of Postgres and avoids the 4.5 MB function response limit. Signed, expiring URLs. |
+| Frontend | **React 19 + Vite** | Static build served from Vercel's CDN. |
+| Hosting | **Vercel** | SPA and API in one project with HTTPS (needed for webhooks). Function pinned next to the database. |
+| Tests | **Vitest + Supertest** | Fast, ESM-native, drives the real Express stack. |
 
-### 1. Install and configure
+Dependencies are deliberately minimal: no ORM, no validation or logging library. The validator, logger and timezone helpers are each about 100 lines and fully tested.
+
+---
+
+## 🚀 Setup
+
+**Prerequisites (all free):** Node.js 24 · [Neon](https://neon.tech) · [Google AI Studio key](https://aistudio.google.com/app/apikey) · [Vapi](https://dashboard.vapi.ai) · [Vercel](https://vercel.com) with `npm i -g vercel`
 
 ```bash
-git clone <repo-url> && cd VoiceAI
+# 1. Install and configure
+git clone https://github.com/MHadiShahid/VoiceAI.git && cd VoiceAI
 npm install
-cp .env.example .env        # then fill in the values (see Environment variables)
-```
+cp .env.example .env              # fill in the values below
 
-### 2. Create the database (Neon)
+# 2. Database (Neon pooled connection string in DATABASE_URL)
+npm run db:migrate                # idempotent schema
+npm run db:seed                   # optional: two demo patients
 
-1. In Neon, create a project and copy the **pooled** connection string into `DATABASE_URL`.
-2. Apply the schema and (optionally) seed two demo patients:
-   ```bash
-   npm run db:migrate
-   npm run db:seed
-   ```
+# 3. Run locally
+npm run dev                       # API :3001, dashboard http://localhost:5173
+npm test                          # 102 tests, no database needed
 
-### 3. Run locally
-
-```bash
-npm run dev            # API on :3001, dashboard on http://localhost:5173
-npm test               # 102 tests, no database required
-```
-
-To test the phone flow against your local machine, expose port 3001 with a tunnel (for example `ngrok http 3001`), set `PUBLIC_BASE_URL` to the tunnel URL, and run `npm run vapi:setup`.
-
-### 4. Deploy to Vercel
-
-```bash
-vercel link                                  # create/link the project
-vercel env add DATABASE_URL production       # paste the Neon pooled URL
+# 4. Deploy
+vercel link
+vercel env add DATABASE_URL production
 vercel env add VAPI_WEBHOOK_SECRET production
-vercel env add PUBLIC_PHONE_NUMBER production   # after step 5 (optional, shown on dashboard)
+vercel env add VAPI_API_KEY production
+vercel blob create-store voice-ai-recordings --access private --region sin1 --yes
 vercel deploy --prod
-```
 
-`vercel.json` builds the React app into `client/dist` (served by the CDN) and rewrites `/api/*` to the Express function in `api/index.js`. Everything else goes to the SPA.
-
-### 4b. Recording storage (Vercel Blob)
-
-```bash
-vercel blob create-store voice-ai-recordings --access private --region sin1 --yes   # links it and adds BLOB_READ_WRITE_TOKEN
-vercel env add VAPI_API_KEY production                                              # the server downloads recordings from Vapi
-npm run db:migrate                                                                  # adds the recording columns
-```
-
-New calls are archived automatically when they end. `npm run recordings:archive` backfills or retries any recordings that aren't stored yet. It is idempotent.
-
-### 5. Provision the voice agent (Vapi)
-
-Set `PUBLIC_BASE_URL` in `.env` to your production URL, then run:
-
-```bash
+# 5. Provision the voice agent (set PUBLIC_BASE_URL in .env to the deployed URL first)
 npm run vapi:setup
 ```
 
-The script is idempotent. Re-run it whenever the prompt or tools change. It:
-1. Registers `GEMINI_API_KEY` as a Vapi **Google credential** (BYOK) if none exists. To replace the key later, run `npm run vapi:setup -- --update-gemini-key`. Vapi re-validates the key against Gemini on every update, which fails while Gemini is overloaded.
-2. Creates or updates the assistant **"Riley - Patient Intake"** from `assistantConfig.js`, with webhooks pointed at `$PUBLIC_BASE_URL/api/vapi/webhook` and authenticated with `VAPI_WEBHOOK_SECRET`.
-3. Attaches it to your Vapi number, or provisions a **free Vapi U.S. number** (optionally in `VAPI_PHONE_AREA_CODE`; otherwise it tries common area codes).
-4. If `VAPI_PUBLIC_KEY` is set, it locks that public key to this assistant and your origins, for the dashboard's browser-call button. Then set `VAPI_PUBLIC_KEY` and `VAPI_ASSISTANT_ID` in Vercel.
+`vapi:setup` is idempotent; re-run it whenever the prompt or tools change. It registers the Gemini key with Vapi (only on first run; use `-- --update-gemini-key` to rotate it), creates or updates the **"Riley - Patient Intake"** assistant pointed at `$PUBLIC_BASE_URL/api/vapi/webhook`, attaches or provisions a **free U.S. number**, and locks the browser-call public key to this assistant and your domain. Then set `PUBLIC_PHONE_NUMBER`, `VAPI_PUBLIC_KEY` and `VAPI_ASSISTANT_ID` in Vercel and redeploy.
 
-New free numbers can take a few minutes to activate. After that, call the number.
+To test the phone flow against a local server, expose port 3001 with a tunnel (for example `ngrok http 3001`), point `PUBLIC_BASE_URL` at it, and re-run `vapi:setup`.
 
-### 6. Verify end to end
-
-1. `curl $PUBLIC_BASE_URL/api/health` should return `"database":"ok"`.
-2. Call the number, or click **🎙 Talk to Riley** on the dashboard, and register a patient. They appear on the dashboard within 15 seconds.
-3. Call again from the same phone number and give the same number. Riley recognizes the record and offers to update it.
-4. Check the **Calls** page for the transcript, summary and the archived recording (inline audio player).
-
----
-
-## Environment variables
+<details>
+<summary><b>🔧 Environment variables</b></summary>
 
 | Variable | Required | Used by | Description |
 |---|---|---|---|
-| `DATABASE_URL` | ✅ | API, migrate, seed | Neon **pooled** Postgres connection string (TLS) |
-| `VAPI_WEBHOOK_SECRET` | ✅ | API + setup | Shared secret Vapi sends as `x-vapi-secret`. In production, webhooks are rejected if it is unset. |
-| `VAPI_API_KEY` | ✅ | API, `vapi:setup`, `recordings:archive` | Vapi private API key. At runtime it is used only to download call recordings, because Vapi serves them through short-lived presigned URLs. Server-side only. |
-| `BLOB_READ_WRITE_TOKEN` | ✅ | API, `recordings:archive` | Private Vercel Blob store for recordings. Vercel injects it when the store is linked (`vercel blob create-store … --access private`); pull it locally with `vercel env pull .env.local`. Without it, recordings are only played from Vapi. |
-| `GEMINI_API_KEY` | setup only | `vapi:setup` | Google AI Studio key, stored in Vapi as a credential |
-| `PUBLIC_BASE_URL` | setup only | `vapi:setup` | Deployed URL, used to build the webhook URL |
+| `DATABASE_URL` | ✅ | API, migrate, seed | Neon **pooled** connection string (TLS) |
+| `VAPI_WEBHOOK_SECRET` | ✅ | API, setup | Shared secret Vapi sends as `x-vapi-secret`. Production rejects webhooks if unset. |
+| `VAPI_API_KEY` | ✅ | API, setup, archive | Vapi private key. At runtime it is only used to download recordings. Server-side only. |
+| `BLOB_READ_WRITE_TOKEN` | ✅ | API, archive | Injected by Vercel when the Blob store is linked. Locally: `vercel env pull .env.local`. |
+| `GEMINI_API_KEY` | setup | `vapi:setup` | Stored in Vapi as a credential (BYOK) |
+| `PUBLIC_BASE_URL` | setup | `vapi:setup` | Deployed URL, used for the webhook |
 | `GEMINI_MODEL` | – | `vapi:setup` | Default `gemini-3.1-flash-lite` |
-| `VAPI_PHONE_AREA_CODE` | – | `vapi:setup` | Preferred area code for a new free number |
-| `PUBLIC_PHONE_NUMBER` | – | API `/info` | Intake number shown in the dashboard banner |
-| `VAPI_PUBLIC_KEY` | – | API `/info`, `vapi:setup` | Vapi **public** key for browser calls. It is meant to be exposed to browsers, and `vapi:setup` restricts it to this assistant and to `PUBLIC_BASE_URL` + `localhost:5173` (other origins and ad-hoc assistants get 403). |
-| `VAPI_ASSISTANT_ID` | – | API `/info` | Assistant id printed by `vapi:setup`; enables the browser-call button |
-| `CLINIC_TIMEZONE` | – | API + prompt | Default `America/New_York` (mock calendar and "today") |
-| `LOG_LEVEL` | – | API | `debug \| info \| warn \| error`, default `info` |
-| `PORT` | – | local API | Default `3001` |
+| `VAPI_PHONE_AREA_CODE` | – | `vapi:setup` | Preferred area code for a new number |
+| `PUBLIC_PHONE_NUMBER` | – | API `/info` | Number shown on the dashboard |
+| `VAPI_PUBLIC_KEY` · `VAPI_ASSISTANT_ID` | – | API `/info` | Enable browser calls. The public key is restricted by `vapi:setup`. |
+| `CLINIC_TIMEZONE` | – | API, prompt | Default `America/New_York` |
+| `LOG_LEVEL` · `PORT` | – | API | Defaults `info` · `3001` |
+</details>
 
 ---
 
-## Testing
+## 🧪 Testing
 
 ```bash
-npm test
+npm test     # 102 tests in server/tests, real Express stack with in-memory fakes
 ```
 
-There are 102 tests in [`server/tests`](server/tests). They run the real Express app against in-memory repositories that follow the same contract as the SQL ones.
+| Suite | Tests | Covers |
+|---|---|---|
+| `patient.validation.test.js` | 55 | Names (Unicode, hyphens, apostrophes), impossible and future DOBs, phone formats and area codes, states, ZIP+4, sex synonyms, member IDs, control characters, create/update/draft modes |
+| `patients.api.test.js` | 16 | Every endpoint and status code, envelope, filters, partial update, soft delete, malformed JSON, DB failure → 500 |
+| `vapi.webhook.test.js` | 25 | Webhook auth, per-field errors, registration, idempotent retries, DB failure → graceful `system_error`, duplicate detection, **identity verification and lockout, refused updates for unverified callers**, appointments and double-booking, transcripts, dropped calls, assistant config |
+| `recordings.test.js` | 6 | Background archiving, signed-URL playback, fallback to Vapi, backfill, idempotency, 404 |
 
-- **Validation** (`patient.validation.test.js`): names (including Unicode, apostrophes and hyphens), impossible and future DOBs, 3-digit phones, area codes, state names, ZIP+4, sex synonyms, member IDs, control-character stripping, and the create, update and draft modes.
-- **REST API** (`patients.api.test.js`): 201/200/400/404/422/500, envelope shape, every filter, partial update and `updated_at`, soft-delete semantics, malformed JSON, and the response when the DB fails.
-- **Voice webhook** (`vapi.webhook.test.js`): secret authentication, per-field errors, JSON-string arguments, registration through the service layer, idempotent retry, DB failure turned into `system_error`, duplicate detection and the update flow, appointment booking and double-booking, transcripts stored and linked, a dropped call marked `incomplete` with partial data, and the assistant config shape.
-
-**Simulated end-to-end calls.** Vapi's text chat API needs a card on file, so the agent was tested with a harness. It runs the exact production prompt and tools on Gemini, routes every tool call to the live production webhook, and uses a second Gemini instance as a scripted caller. Two scenarios passed:
-1. New patient: gives a future DOB (re-prompted for that field only), uses the caller-ID number (duplicate check runs), corrects the last-name spelling during read-back (only that field changed), adds insurance, saves ("You're all set, Testy."), books a morning appointment, and the call ends.
-2. Spanish returning caller ("Hola, hablo español"): Riley switches to Spanish, recognizes the seeded patient by phone, verifies the DOB, and updates only the address fields.
-Tool round-trips to production took about 300 ms. The transcripts led to two prompt fixes: a strict ordering rule so the optional-info offer comes before the read-back, and a mandatory read-back before `update_patient`.
-
-The SQL schema and repositories were also exercised against a real PostgreSQL engine (PGlite) during development: idempotent migration, CHECK constraints rejecting a future DOB or invalid phone when validation is bypassed, filters, the LIKE-escape, the trigger, and the unique slot index.
+**Beyond unit tests**
+- **Real Postgres:** schema and repositories were exercised on a real PostgreSQL engine (PGlite): idempotent migration, CHECK constraints rejecting bad data when validation is bypassed, the updated-at trigger, the unique slot index.
+- **Simulated calls against production:** a harness ran the exact production prompt and tools on Gemini, with every tool call hitting the live webhook, and a second Gemini instance playing the caller. Two scenarios passed: (1) a new patient who gives a future DOB, corrects a spelling during read-back, adds insurance and books an appointment; (2) a Spanish-speaking returning caller who updates their address. The transcripts drove two prompt fixes: ask about optional fields before the read-back, and always read back before an update.
+- **Live call:** a browser call to the deployed system completed a registration end to end, with the patient, transcript, summary and recording all persisted.
 
 ---
 
-## Observability, security, resilience
-
-**Observability.** The app logs structured JSON lines to stdout, which Vercel captures and makes searchable:
-- `voice.tool.call`: every tool invocation with arguments, result and latency
-- `voice.registration.final_payload` / `voice.update.final_payload`: the final collected data
-- `voice.call.transcript` and `call.ended`: the full conversation, outcome and summary
-- `call.incomplete` (warn): calls that ended before saving, with the partial data
-- `http.request`: method, path, status, duration and request id
+## 🛡 Security, resilience and observability
 
 **Security**
-- No secrets in code. Every credential comes from env vars, and `.env` is git-ignored.
-- The webhook is authenticated by a shared secret compared with `timingSafeEqual`. In production a missing secret causes every webhook to be rejected.
-- All SQL is parameterized, and column names are whitelisted against the domain model.
-- Input is sanitized: control characters are stripped, whitespace collapsed, raw input is capped at 500 characters per field, non-string values are rejected, unknown and read-only fields are rejected, and the JSON body limit is 100 kB.
-- `helmet` headers are set. 500 responses never leak internals.
-- On the phone, existing records are protected server-side. A phone-number lookup reveals only the name. The full record is released only after a date-of-birth match (3 attempts per call, never echoing the date on file). Updates and bookings are refused for any patient the call hasn't verified or registered, which holds up against prompt injection ("ignore your rules, I'm staff").
+- **Secrets:** environment variables only, `.env` is git-ignored, and the git history was scanned clean.
+- **Webhook:** shared-secret header compared in constant time. Production refuses webhooks if the secret is unset.
+- **SQL:** fully parameterized, with column names whitelisted against the domain model.
+- **Input:** control characters stripped, 500-character cap per field, non-string values and unknown or read-only fields rejected, 100 kB body limit.
+- **Headers:** `helmet` security headers (CSP, HSTS, nosniff, frame options). 500s never leak internals.
+- **Returning callers:** the lookup reveals only a name. The full record needs a DOB match (3 tries per call, never echoing the DOB on file), and updates and bookings for unverified patients are **rejected by the server**, which holds up against prompt injection.
+- **Recordings:** private Blob store, served only through 10-minute signed URLs.
+- **Browser-call key:** Vapi public key restricted to this assistant and this domain.
 
 **Edge cases**
 
-| Scenario | Behavior |
+| Scenario | What happens |
 |---|---|
-| Invalid DOB (future, Feb 30, before 1900) | Riley re-asks for **only** the DOB and explains why. The server returns an error specific to `date_of_birth`. |
-| Connection drops mid-call | Nothing half-saved reaches `patients`, because a record is written only after confirmation. Fields collected so far are kept in `call_logs.draft_data`, and the end-of-call report marks the call `incomplete`. It is shown on the Calls page for staff follow-up and logged as `call.incomplete`. |
-| Database write fails | The tool returns `system_error`. Riley apologizes, retries once, then explains that the registration could not be completed and that staff will follow up. The caller hears an explanation, not silence. If the webhook itself is unreachable, Vapi's `request-failed` message has the model apologize in the caller's language. |
-| Caller wants to start over | Riley confirms, clears everything collected, and restarts from the name. |
-| Corrections / out-of-order answers | Only the affected field changes. Volunteered information is kept. |
-| Interruptions | Barge-in after one word. Riley addresses what the caller said instead of repeating itself. |
-| Model retries a save | `register_patient` is idempotent per call, so it updates the record *it registered* instead of duplicating it. A record the call merely updated is never overwritten, so a parent can update their own record and then register a child on the same call. |
-| Caller tries to extract someone else's data | The lookup gives the model only a name. A wrong DOB returns nothing from the record. Three wrong attempts lock verification for the call. Updates and bookings without verification are rejected by the server. |
-| Two callers want the same slot | The partial unique index makes one booking fail with `conflict`, and Riley offers other times. |
-| Silence | "Are you still there?" after 10 s (up to twice). Maximum call length is 15 min. |
+| Invalid DOB (future, Feb 30, pre-1900) | Riley re-asks for **only** the DOB and says why. The server returns a `date_of_birth`-specific error. |
+| Call drops mid-way | Nothing half-saved reaches `patients`, because writes happen only after confirmation. Collected fields stay in `call_logs.draft_data`, and the call is marked **incomplete** on the dashboard for follow-up. |
+| Database write fails | The tool returns `system_error`. Riley apologizes, retries once, then says staff will follow up. Never silence, never a false "saved". |
+| Caller wants to start over | Riley confirms, clears everything, restarts from the name. |
+| Corrections, out-of-order answers, interruptions | Only the affected field changes. Volunteered info is kept. Barge-in after one word. |
+| Model retries a save | Idempotent per call: it updates the record the call registered instead of duplicating it. |
+| Caller fishes for someone else's data | The model has only a name. Wrong DOBs reveal nothing, and 3 failures lock the check. Unverified updates are rejected. |
+| Same slot booked twice | The unique index rejects one booking, and Riley offers other times. |
+| Silence | "Are you still there?" after 10 s, up to twice. Calls are capped at 15 minutes. |
+
+**Observability:** structured JSON logs to stdout (searchable in Vercel): `voice.tool.call` (args, result, latency), `voice.registration.final_payload`, `voice.call.transcript`, `call.incomplete`, `call.recording.archived`, `voice.identity.verification`, and `http.request` with request ids.
 
 ---
 
-## Known limitations and trade-offs
+## ⚖️ Known limitations and trade-offs
 
-- **Gemini free-tier quotas are the main operational risk.** Measured on a new free key (Nov 2026): `gemini-3-flash-preview` and `gemini-3.5-flash` allow only **20 requests per day**, less than one call, because a call makes roughly 20–40 model requests. `gemini-3.1-flash-lite` (the default) has a much higher quota that Google doesn't publish (check it in AI Studio). Quotas reset at midnight Pacific. If the daily quota runs out, Riley stalls mid-call. The fix is to enable billing on the Gemini project (Flash-Lite costs fractions of a cent per call) or set `GEMINI_MODEL` and re-run `vapi:setup`. Gemini also returns 503 "high demand" errors now and then, and Vapi has no model-level fallback for Gemini, so a turn can stall briefly when that happens. Vapi's own minutes use its free trial credit.
-- **The API is unauthenticated** so reviewers can query it directly. For real use it would need auth (API keys or OAuth) and role-based access. The data is fictional, and HIPAA is out of scope per the brief.
-- **Duplicate detection uses phone number only.** Families often share a number, so it is a prompt to the caller ("is this you?") rather than a hard unique constraint. The caller can choose to register a separate person.
-- **Identity verification is knowledge-based.** It uses phone number plus DOB, and DOBs are not secret. It is enforced server-side and rate-limited per call, but a determined attacker can make several calls. A real system would add a one-time code sent by SMS to the number on file.
-- **Name validation allows spaces** (for example "De La Cruz") and Unicode letters, in addition to the spec's letters, hyphens and apostrophes. This is deliberate for real-world names and Spanish speakers.
-- **Phone validation** requires 10 digits and an area code that does not start with 0 or 1. It does not check whether the number is in service, and it does not enforce full NANP rules on the exchange, so testers can use 555 numbers.
-- **The appointment calendar is mocked**: two providers, weekday hourly slots, generated rather than stored. Only bookings are persisted. There is no cancellation flow on the phone.
-- **The DOB "future" check uses UTC.** Around midnight, a birth date of "tomorrow" in a U.S. timezone can be accepted for a few hours.
-- **Speech recognition of names and emails** is the weakest link of any voice system. The prompt mitigates this with spelling and read-back, but it is not perfect.
-- **Serverless cold starts** (Vercel plus Neon auto-suspend) can add about 1 s to the first tool call after a period of inactivity. Riley speaks a filler phrase while waiting.
-- **Recordings are archived from Vapi after the call**, in the background. If archiving fails (logged as `call.recording.archive_failed`), playback falls back to Vapi's copy, and `npm run recordings:archive` retries. Calls made before 2026-11-02 were recorded as WAV (about 5 MB per minute). New calls use MP3. The Blob free tier is 1 GB.
+- **Gemini free-tier capacity is the main operational risk.** Flash-Lite's free quota is unpublished, and Google sometimes returns 503 "high demand", which stalls a turn (Vapi has no fallback model for Gemini). Enabling billing on the Gemini project costs fractions of a cent per call and removes both problems.
+- **The API is unauthenticated** so reviewers can query it freely. Real use needs auth and roles. The data is fictional, and HIPAA is out of scope per the brief.
+- **Identity verification is knowledge-based** (phone + DOB). It is enforced server-side and rate-limited per call, but DOBs aren't secret. Production would add an SMS one-time code.
+- **Duplicate detection is by phone number**, a prompt rather than a unique constraint, because families share numbers.
+- **Name validation also allows spaces and Unicode letters** (for example "De La Cruz", "Muñoz"). This is deliberate for real names and Spanish speakers.
+- **Phone validation** checks 10 digits and the area code, not whether the number is in service, so 555 test numbers work.
+- **Mock calendar:** generated slots, two providers, no cancellation by phone.
+- **The DOB "future" check uses UTC**, so a "tomorrow" birthday can pass for a few hours around midnight U.S. time.
+- **Recognizing names and emails** is the weakest link of any voice system. Spelling and read-back mitigate it.
+- **Cold starts** (Vercel + Neon auto-suspend) can add about 1 s to the first tool call after idle time, covered by a filler phrase.
+- **Recordings are archived after the call** in the background. On failure, playback falls back to Vapi's copy and `npm run recordings:archive` retries.
 
 ---
 
-## Next steps
+## 🔭 Next steps
 
-1. Add authentication and roles for the API and dashboard, plus an audit log of record changes.
-2. Stronger caller verification for updates, such as an SMS one-time code.
-3. A callback queue for `incomplete` calls, so staff can complete them from the dashboard in one click.
-4. A real scheduling integration (EHR or Google Calendar), with cancellation and rescheduling by phone.
-5. Automated conversation evals (Vapi test suites or simulated callers) covering corrections, Spanish and failure injection.
-6. Rate limiting and request quotas on public endpoints (for example Vercel Firewall rules).
-7. More languages: the pipeline is already multilingual, so this only needs more prompt rules.
+1. Authentication and roles for the API and dashboard, plus an audit log of record changes.
+2. SMS one-time codes for returning-caller verification.
+3. A callback queue so staff can finish **incomplete** calls in one click.
+4. Real scheduling (EHR or Google Calendar) with cancel and reschedule by phone.
+5. Automated conversation evals in CI (corrections, Spanish, prompt injection, failure injection).
+6. Rate limiting on public endpoints (for example Vercel Firewall rules).
+7. More languages. The pipeline is already multilingual, so this mostly needs prompt rules.

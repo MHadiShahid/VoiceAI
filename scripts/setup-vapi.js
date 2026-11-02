@@ -6,9 +6,12 @@
 //   2. Creates or updates the assistant from server/src/voice/assistantConfig.js.
 //   3. Attaches the assistant to an existing Vapi phone number, or provisions
 //      a free Vapi U.S. number if the account has none.
+//   4. If VAPI_PUBLIC_KEY is set (browser calls from the dashboard), restricts
+//      that public key to this assistant and to our own origins, so the key
+//      embedded in the web page can't be used for anything else.
 //
 // Required env (.env): VAPI_API_KEY, GEMINI_API_KEY, VAPI_WEBHOOK_SECRET, PUBLIC_BASE_URL
-// Optional env:        GEMINI_MODEL, VAPI_PHONE_AREA_CODE, CLINIC_TIMEZONE
+// Optional env:        GEMINI_MODEL, VAPI_PHONE_AREA_CODE, CLINIC_TIMEZONE, VAPI_PUBLIC_KEY
 //
 // Usage: npm run vapi:setup
 
@@ -110,6 +113,22 @@ async function attachPhoneNumber(assistantId) {
   throw lastError;
 }
 
+async function restrictPublicKey(assistantId) {
+  const publicKey = env.VAPI_PUBLIC_KEY?.trim();
+  if (!publicKey) return;
+  const tokens = await vapi('GET', '/token');
+  const token = tokens.find((t) => t.value === publicKey && t.tag === 'public');
+  if (!token) {
+    console.log("! VAPI_PUBLIC_KEY not found among this org's public keys; skipping restriction.");
+    return;
+  }
+  const allowedOrigins = [new URL(baseUrl).origin, 'http://localhost:5173'];
+  await vapi('PATCH', `/token/${token.id}`, {
+    restrictions: { enabled: true, allowedAssistantIds: [assistantId], allowTransientAssistant: false, allowedOrigins },
+  });
+  console.log(`✓ Public key restricted to this assistant and ${allowedOrigins.join(', ')}`);
+}
+
 const FALLBACK_AREA_CODES = ['415', '628', '650', '510', '408', '312', '646', '213', '617', '206', '512', '305'];
 
 try {
@@ -117,10 +136,11 @@ try {
   await ensureGeminiCredential();
   const assistantId = await upsertAssistant();
   const phone = await attachPhoneNumber(assistantId);
+  await restrictPublicKey(assistantId);
   console.log('\nDone.');
   console.log(`  Assistant ID : ${assistantId}`);
   console.log(`  Phone number : ${phone.number ?? 'activating — check the Vapi dashboard in a few minutes'}`);
-  console.log('  Set PUBLIC_PHONE_NUMBER in Vercel to show it on the dashboard.');
+  console.log('  Set PUBLIC_PHONE_NUMBER (and VAPI_PUBLIC_KEY + VAPI_ASSISTANT_ID for browser calls) in Vercel.');
 } catch (error) {
   console.error(`\nSetup failed: ${error.message}`);
   process.exitCode = 1;

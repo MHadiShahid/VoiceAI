@@ -55,7 +55,14 @@ export function createApp({ repositories, logger, config, healthCheck = async ()
   api.use(
     systemRoutes({
       healthCheck,
-      publicInfo: { phone_number: config.publicPhoneNumber || null, clinic_timezone: config.clinicTimezone },
+      publicInfo: {
+        phone_number: config.publicPhoneNumber || null,
+        clinic_timezone: config.clinicTimezone,
+        web_call:
+          config.vapiPublicKey && config.vapiAssistantId
+            ? { public_key: config.vapiPublicKey, assistant_id: config.vapiAssistantId }
+            : null,
+      },
     }),
   );
 

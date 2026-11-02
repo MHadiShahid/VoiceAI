@@ -1,10 +1,15 @@
+import { lazy, Suspense, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { formatPhone } from '../lib/format.js';
 import { useApi } from '../lib/useApi.js';
 
+const VoiceCallWidget = lazy(() => import('./VoiceCallWidget.jsx').then((m) => ({ default: m.VoiceCallWidget })));
+
 export function Layout() {
   const { data: info } = useApi((signal) => api.info({ signal }));
+  const [callOpen, setCallOpen] = useState(false);
+  const webCall = info?.web_call;
 
   return (
     <div className="app">
@@ -25,10 +30,23 @@ export function Layout() {
         </div>
       </header>
 
-      {info?.phone_number && (
+      {(info?.phone_number || webCall) && (
         <div className="callout">
-          <span aria-hidden="true">📞</span> Register by phone with Riley, our AI intake coordinator:{' '}
-          <a href={`tel:${info.phone_number}`}>{formatPhone(info.phone_number)}</a>
+          <span aria-hidden="true">📞</span> Register with Riley, our AI intake coordinator
+          {info?.phone_number && (
+            <>
+              {': call '}
+              <a href={`tel:${info.phone_number}`}>{formatPhone(info.phone_number)}</a>
+            </>
+          )}
+          {webCall && (
+            <>
+              {info?.phone_number ? ' or ' : ': '}
+              <button type="button" className="callout-btn" onClick={() => setCallOpen(true)}>
+                🎙 talk in your browser
+              </button>
+            </>
+          )}
           <span className="muted"> · English & Español</span>
         </div>
       )}
@@ -37,7 +55,22 @@ export function Layout() {
         <Outlet />
       </main>
 
-      <footer className="footer">Demo system — fictional data only. Not for real patient information.</footer>
+      {webCall && !callOpen && (
+        <button type="button" className="voice-fab" onClick={() => setCallOpen(true)}>
+          🎙 Talk to Riley
+        </button>
+      )}
+      {webCall && callOpen && (
+        <Suspense fallback={null}>
+          <VoiceCallWidget
+            publicKey={webCall.public_key}
+            assistantId={webCall.assistant_id}
+            onClose={() => setCallOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      <footer className="footer">Demo system with fictional data only. Not for real patient information.</footer>
     </div>
   );
 }

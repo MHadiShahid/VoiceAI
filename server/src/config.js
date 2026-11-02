@@ -16,6 +16,10 @@ export const config = Object.freeze({
   databaseUrl: env.DATABASE_URL ?? '',
   vapiWebhookSecret: env.VAPI_WEBHOOK_SECRET ?? '',
   publicPhoneNumber: env.PUBLIC_PHONE_NUMBER ?? '',
+  // Browser calls: a Vapi *public* key is designed to be exposed to the
+  // browser (it is restricted to our assistant + origins by vapi:setup).
+  vapiPublicKey: env.VAPI_PUBLIC_KEY ?? '',
+  vapiAssistantId: env.VAPI_ASSISTANT_ID ?? '',
   clinicTimezone: env.CLINIC_TIMEZONE || 'America/New_York',
   logLevel: env.LOG_LEVEL ?? 'info',
 });

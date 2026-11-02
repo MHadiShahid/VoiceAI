@@ -13,6 +13,8 @@ export function buildTestApp({ repositories = createMemoryRepositories(), now } 
       vapiWebhookSecret: WEBHOOK_SECRET,
       isProduction: false,
       publicPhoneNumber: '+15555550100',
+      vapiPublicKey: 'pub-key',
+      vapiAssistantId: 'asst-1',
     },
     now,
   });

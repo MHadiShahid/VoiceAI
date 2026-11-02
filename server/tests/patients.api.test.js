@@ -130,7 +130,9 @@ describe('GET/PUT/DELETE /api/patients/:id', () => {
 describe('misc endpoints', () => {
   it('serves health and info', async () => {
     expect((await request(app).get('/api/health')).body.data.status).toBe('ok');
-    expect((await request(app).get('/api/info')).body.data.phone_number).toBe('+15555550100');
+    const info = (await request(app).get('/api/info')).body.data;
+    expect(info.phone_number).toBe('+15555550100');
+    expect(info.web_call).toEqual({ public_key: 'pub-key', assistant_id: 'asst-1' });
   });
 
   it('returns a JSON 404 for unknown routes', async () => {

@@ -88,12 +88,29 @@ async function attachPhoneNumber(assistantId) {
     console.log(`✓ Phone number ${phone.number ?? phone.sipUri ?? phone.id} -> assistant`);
     return phone;
   }
-  const body = { provider: 'vapi', name: 'Patient Intake Line', assistantId };
-  if (env.VAPI_PHONE_AREA_CODE) body.numberDesiredAreaCode = env.VAPI_PHONE_AREA_CODE;
-  phone = await vapi('POST', '/phone-number', body);
-  console.log(`✓ Provisioned free Vapi number ${phone.number ?? '(activating…)'} (${phone.id})`);
-  return phone;
+  // Free Vapi numbers require an area code and availability varies, so fall
+  // back through a list of common U.S. area codes.
+  const areaCodes = env.VAPI_PHONE_AREA_CODE ? [env.VAPI_PHONE_AREA_CODE] : FALLBACK_AREA_CODES;
+  let lastError;
+  for (const areaCode of areaCodes) {
+    try {
+      phone = await vapi('POST', '/phone-number', {
+        provider: 'vapi',
+        name: 'Patient Intake Line',
+        assistantId,
+        numberDesiredAreaCode: areaCode,
+      });
+      console.log(`✓ Provisioned free Vapi number ${phone.number ?? '(activating…)'} in area code ${areaCode} (${phone.id})`);
+      return phone;
+    } catch (error) {
+      lastError = error;
+      console.log(`  area code ${areaCode} unavailable: ${error.message}`);
+    }
+  }
+  throw lastError;
 }
+
+const FALLBACK_AREA_CODES = ['415', '628', '650', '510', '408', '312', '646', '213', '617', '206', '512', '305'];
 
 try {
   console.log(`Configuring Vapi with webhook ${baseUrl}/api/vapi/webhook`);

@@ -4,10 +4,10 @@ You call a phone number and talk to **Riley**, an AI intake coordinator. Riley c
 
 | | |
 |---|---|
-| 📞 **Phone number** | `+1 (XXX) XXX-XXXX` ← *filled in after `npm run vapi:setup`* |
-| 🌐 **Dashboard** | `https://<your-app>.vercel.app` |
-| 🔌 **API base URL** | `https://<your-app>.vercel.app/api` (for example `GET /api/patients`) |
-| 🧪 **Test credentials** | None. The API is open and holds fictional demo data only. |
+| 📞 **Phone number** | **+1 (628) 245-9020** |
+| 🌐 **Dashboard** | https://voice-ai-patient-registration-delta.vercel.app |
+| 🔌 **API base URL** | https://voice-ai-patient-registration-delta.vercel.app/api (for example [`GET /api/patients`](https://voice-ai-patient-registration-delta.vercel.app/api/patients)) |
+| 🧪 **Test credentials** | None. The API is open and holds fictional demo data only. Two seed patients exist: Jane Doe (415-555-0134) and Carlos Muñoz-García (305-555-0172). Give one of those numbers on a call to try the returning-caller flow. |
 
 ---
 
@@ -66,7 +66,7 @@ You call a phone number and talk to **Riley**, an AI intake coordinator. Riley c
 
 ```
                 ┌──────────────────────────── Vapi (managed) ─────────────────────────────┐
-  Caller ──PSTN──► Free Vapi number ─► Deepgram STT ─► Gemini 3 Flash ─► ElevenLabs TTS ─► Caller
+  Caller ──PSTN──► Free Vapi number ─► Deepgram STT ─► Gemini 3.1 Flash-Lite ─► ElevenLabs TTS ─► Caller
                 └──────────────────────────────────────┬──────────────────────────────────┘
                                                        │ HTTPS webhook (x-vapi-secret)
                                                        │  • tool-calls          (sync, mid-conversation)
@@ -130,7 +130,7 @@ Every service below is used on its **free tier**. No credit card or paid plan is
 | Layer | Choice | Why |
 |---|---|---|
 | Telephony + voice orchestration | **Vapi** | Gives free U.S. numbers and handles STT, TTS, endpointing and barge-in, so the work goes into the prompt, the tools and the backend (as the brief recommends). Supports Gemini natively with your own API key. |
-| LLM | **Google Gemini 3 Flash (preview)** (configurable via `GEMINI_MODEL`) | Free-tier API key and reliable function calling. Benchmarked fastest of the free models (about 1.2 s to a tool call, compared with 3–8 s for `gemini-3.5-flash` and `gemini-3.1-flash-lite`); `gemini-2.5-*` is no longer offered to new keys. Strong in Spanish. Registered with Vapi as a BYOK credential, so usage is billed to your free Gemini quota. |
+| LLM | **Google Gemini 3.1 Flash-Lite** (configurable via `GEMINI_MODEL`) | Free-tier API key and reliable function calling. Picked by benchmarking the free models with the real prompt: about 1.1–2.3 s to a correct tool call with no "thinking" overhead, and the most generous free quota. `gemini-3.5-flash` took 2.5–3.8 s per turn. `gemini-3-flash-preview` is fast but its free tier allows only 20 requests per day, less than one call. `gemini-2.5-*` is no longer offered to new keys. Registered with Vapi as a BYOK credential, so usage is billed to your free Gemini quota. |
 | STT | Deepgram **Nova-3, `language: multi`** (via Vapi) | Handles English/Spanish code-switching in one stream, and `smartFormat` turns spoken digits into numbers. |
 | TTS | ElevenLabs **Flash v2.5** (via Vapi) | Low latency, and the same voice speaks both English and Spanish. |
 | Backend | **Node.js 24 + Express 5** | Small and well-known. Express 5 passes async errors to the error middleware natively. The same app runs locally and as a Vercel function. |
@@ -238,7 +238,7 @@ Supporting tables:
 
 ## REST API
 
-Base URL: `https://<your-app>.vercel.app/api` (locally `http://localhost:3001/api`).
+Base URL: `https://voice-ai-patient-registration-delta.vercel.app/api` (locally `http://localhost:3001/api`).
 
 Every response uses the envelope `{ "data": ..., "error": null }` or `{ "data": null, "error": { "code", "message", "details?" } }`.
 
@@ -267,7 +267,7 @@ Every response uses the envelope `{ "data": ..., "error": null }` or `{ "data": 
 - 500: unexpected error (generic message; details are logged, never leaked)
 
 ```bash
-API=https://<your-app>.vercel.app/api
+API=https://voice-ai-patient-registration-delta.vercel.app/api
 
 curl -s -X POST $API/patients -H 'Content-Type: application/json' -d '{
   "first_name":"Jane","last_name":"Doe","date_of_birth":"04/12/1988","sex":"Female",
@@ -367,7 +367,7 @@ New free numbers can take a few minutes to activate. After that, call the number
 | `VAPI_API_KEY` | setup only | `vapi:setup` | Vapi private API key. Not needed by the running server. |
 | `GEMINI_API_KEY` | setup only | `vapi:setup` | Google AI Studio key, stored in Vapi as a credential |
 | `PUBLIC_BASE_URL` | setup only | `vapi:setup` | Deployed URL, used to build the webhook URL |
-| `GEMINI_MODEL` | – | `vapi:setup` | Default `gemini-3-flash-preview` |
+| `GEMINI_MODEL` | – | `vapi:setup` | Default `gemini-3.1-flash-lite` |
 | `VAPI_PHONE_AREA_CODE` | – | `vapi:setup` | Preferred area code for a new free number |
 | `PUBLIC_PHONE_NUMBER` | – | API `/info` | Intake number shown in the dashboard banner |
 | `CLINIC_TIMEZONE` | – | API + prompt | Default `America/New_York` (mock calendar and "today") |
@@ -387,6 +387,11 @@ There are 91 tests in [`server/tests`](server/tests). They run the real Express 
 - **Validation** (`patient.validation.test.js`): names (including Unicode, apostrophes and hyphens), impossible and future DOBs, 3-digit phones, area codes, state names, ZIP+4, sex synonyms, member IDs, control-character stripping, and the create, update and draft modes.
 - **REST API** (`patients.api.test.js`): 201/200/400/404/422/500, envelope shape, every filter, partial update and `updated_at`, soft-delete semantics, malformed JSON, and the response when the DB fails.
 - **Voice webhook** (`vapi.webhook.test.js`): secret authentication, per-field errors, JSON-string arguments, registration through the service layer, idempotent retry, DB failure turned into `system_error`, duplicate detection and the update flow, appointment booking and double-booking, transcripts stored and linked, a dropped call marked `incomplete` with partial data, and the assistant config shape.
+
+**Simulated end-to-end calls.** Vapi's text chat API needs a card on file, so the agent was tested with a harness. It runs the exact production prompt and tools on Gemini, routes every tool call to the live production webhook, and uses a second Gemini instance as a scripted caller. Two scenarios passed:
+1. New patient: gives a future DOB (re-prompted for that field only), uses the caller-ID number (duplicate check runs), corrects the last-name spelling during read-back (only that field changed), adds insurance, saves ("You're all set, Testy."), books a morning appointment, and the call ends.
+2. Spanish returning caller ("Hola, hablo español"): Riley switches to Spanish, recognizes the seeded patient by phone, verifies the DOB, and updates only the address fields.
+Tool round-trips to production took about 300 ms. The transcripts led to two prompt fixes: a strict ordering rule so the optional-info offer comes before the read-back, and a mandatory read-back before `update_patient`.
 
 The SQL schema and repositories were also exercised against a real PostgreSQL engine (PGlite) during development: idempotent migration, CHECK constraints rejecting a future DOB or invalid phone when validation is bypassed, filters, the LIKE-escape, the trigger, and the unique slot index.
 
@@ -427,7 +432,7 @@ The SQL schema and repositories were also exercised against a real PostgreSQL en
 
 ## Known limitations and trade-offs
 
-- **Gemini free-tier rate limits.** These are requests per minute and per day. One call makes roughly 20–40 model requests, so several simultaneous calls can hit the per-minute cap. Mitigation: switch models via `GEMINI_MODEL` (for example `gemini-3.1-flash-lite`) and re-run `vapi:setup`, or move to a paid tier. Gemini preview models also return 503 "high demand" errors now and then; Vapi has no model-level fallback for Gemini, so a call can stall briefly when that happens. Vapi's own minutes use its free trial credit.
+- **Gemini free-tier quotas are the main operational risk.** Measured on a new free key (Nov 2026): `gemini-3-flash-preview` and `gemini-3.5-flash` allow only **20 requests per day**, less than one call, because a call makes roughly 20–40 model requests. `gemini-3.1-flash-lite` (the default) has a much higher quota that Google doesn't publish (check it in AI Studio). Quotas reset at midnight Pacific. If the daily quota runs out, Riley stalls mid-call. The fix is to enable billing on the Gemini project (Flash-Lite costs fractions of a cent per call) or set `GEMINI_MODEL` and re-run `vapi:setup`. Gemini also returns 503 "high demand" errors now and then, and Vapi has no model-level fallback for Gemini, so a turn can stall briefly when that happens. Vapi's own minutes use its free trial credit.
 - **The API is unauthenticated** so reviewers can query it directly. For real use it would need auth (API keys or OAuth) and role-based access. The data is fictional, and HIPAA is out of scope per the brief.
 - **Duplicate detection uses phone number only.** Families often share a number, so it is a prompt to the caller ("is this you?") rather than a hard unique constraint. The caller can choose to register a separate person.
 - **Identity verification is light.** It is a DOB match only. A real system would use stronger verification before allowing edits.

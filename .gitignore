@@ -10,3 +10,5 @@ coverage/
 
 # Challenge brief is confidential
 docs/*.pdf
+
+.env.local

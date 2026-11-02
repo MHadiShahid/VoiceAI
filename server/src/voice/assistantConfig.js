@@ -7,10 +7,15 @@ import { TOOL_DEFINITIONS, TOOL_FAILED_MESSAGE, TOOL_MESSAGES } from './toolDefi
 
 export const ASSISTANT_NAME = 'Riley - Patient Intake';
 
-// Fastest model with reliable function calling on the free tier at time of
-// writing (~1.2 s to a tool call vs 3–8 s for 3.5-flash / 3.1-flash-lite;
-// gemini-2.5-* is no longer offered to new API keys). Override with GEMINI_MODEL.
-export const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview';
+// Chosen by benchmark on a free-tier key (Nov 2026), using the real prompt:
+//  - gemini-3.1-flash-lite: ~1.1–2.3 s to a correct tool call, no thinking tokens,
+//    most generous free quota  ← default
+//  - gemini-3.5-flash:      ~2.5–3.8 s (thinking adds latency on every turn)
+//  - gemini-3-flash-preview: fast, but the free tier allows only 20 requests/day,
+//    less than one phone call
+//  - gemini-2.5-*:          no longer offered to new API keys
+// Override with GEMINI_MODEL.
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
 /**
  * @param {{ serverUrl: string, webhookSecret: string, geminiModel?: string, timeZone?: string }} options

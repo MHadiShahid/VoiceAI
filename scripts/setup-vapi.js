@@ -53,6 +53,12 @@ async function ensureGeminiCredential() {
   const credentials = await vapi('GET', '/credential');
   const existing = credentials.find((c) => c.provider === 'google');
   if (existing) {
+    // Vapi re-validates the key against Gemini on every update, which fails
+    // whenever Gemini is overloaded (503). Only re-send it when rotating keys.
+    if (!process.argv.includes('--update-gemini-key')) {
+      console.log(`✓ Gemini credential exists (${existing.id}); pass --update-gemini-key to replace it`);
+      return existing.id;
+    }
     await vapi('PATCH', `/credential/${existing.id}`, { apiKey: geminiKey });
     console.log(`✓ Updated Gemini credential (${existing.id})`);
     return existing.id;

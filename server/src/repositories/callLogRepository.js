@@ -2,6 +2,7 @@ const WRITABLE = new Set([
   'patient_id', 'caller_number', 'outcome', 'draft_data', 'ended_reason', 'summary',
   'transcript', 'recording_url', 'started_at', 'ended_at', 'duration_seconds',
   'recording_blob_path', 'recording_content_type', 'recording_size_bytes', 'recording_archived_at',
+  'verified_patient_id', 'identity_attempts',
 ]);
 
 /**

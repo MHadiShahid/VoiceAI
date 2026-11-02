@@ -119,10 +119,33 @@ export function createCallLogService({ callLogRepository, recordingSource, recor
       });
     },
 
-    async getPatientIdForCall(callId) {
+    /** Patient this call created with register_patient (used to make retries idempotent). */
+    async getRegisteredPatientIdForCall(callId) {
       if (!callId) return null;
       const existing = await callLogRepository.findById(callId);
-      return existing?.patient_id ?? null;
+      return existing?.outcome === 'registered' ? existing.patient_id : null;
+    },
+
+    /**
+     * Which existing patient record this call may read or change: the one it
+     * registered itself, or the one it verified by date of birth.
+     */
+    async getCallAccess(callId) {
+      const row = callId ? await callLogRepository.findById(callId) : null;
+      return {
+        registeredPatientId: row?.outcome === 'registered' ? row.patient_id : null,
+        verifiedPatientId: row?.verified_patient_id ?? null,
+        identityAttempts: row?.identity_attempts ?? 0,
+      };
+    },
+
+    async recordIdentityAttempt(callId, { callerNumber, verifiedPatientId, attempts }) {
+      if (!callId) return null;
+      return callLogRepository.upsert(callId, {
+        caller_number: callerNumber ?? undefined,
+        identity_attempts: attempts,
+        verified_patient_id: verifiedPatientId ?? undefined,
+      });
     },
 
     /** Persist Vapi's end-of-call-report. A call that never saved a patient is marked incomplete. */

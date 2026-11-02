@@ -33,11 +33,25 @@ const REQUIRED_FOR_CREATE = [
 export const TOOL_DEFINITIONS = {
   check_existing_patient: {
     description:
-      'Look up whether a patient record already exists for a phone number. Call this as soon as the caller gives their phone number.',
+      'Look up whether a patient record already exists for a phone number. Call this as soon as the caller gives their phone number. ' +
+      'Returns only the name on the record; use verify_patient_identity to access anything else.',
     parameters: {
       type: 'object',
       properties: { phone_number: patientFieldProperties.phone_number },
       required: ['phone_number'],
+    },
+  },
+
+  verify_patient_identity: {
+    description:
+      "Verify a returning caller is the patient on file by checking their date of birth. Required before reading back or changing an existing record. Max 3 attempts per call.",
+    parameters: {
+      type: 'object',
+      properties: {
+        patient_id: { type: 'string', description: 'patient_id returned by check_existing_patient.' },
+        date_of_birth: { type: 'string', description: 'Date of birth the caller just said, MM/DD/YYYY.' },
+      },
+      required: ['patient_id', 'date_of_birth'],
     },
   },
 
@@ -70,7 +84,7 @@ export const TOOL_DEFINITIONS = {
     parameters: {
       type: 'object',
       properties: {
-        patient_id: { type: 'string', description: 'patient_id returned by check_existing_patient or register_patient.' },
+        patient_id: { type: 'string', description: 'patient_id of a patient verified with verify_patient_identity (or registered on this call).' },
         ...patientFieldProperties,
       },
       required: ['patient_id'],

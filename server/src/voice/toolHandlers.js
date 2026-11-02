@@ -35,6 +35,16 @@ const validationResult = (errors) => ({
   next_step: 'Apologize briefly, explain each problem in plain words, and re-ask the caller ONLY for these fields.',
 });
 
+const MAX_IDENTITY_ATTEMPTS = 3;
+
+const NOT_VERIFIED_RESULT = {
+  success: false,
+  error_type: 'not_verified',
+  message: "This call has not verified the patient's identity.",
+  next_step:
+    'Do not share or change anything on this record. Ask for the date of birth and call verify_patient_identity first.',
+};
+
 const SYSTEM_ERROR_RESULT = {
   success: false,
   error_type: 'system_error',
@@ -58,6 +68,17 @@ export function createToolHandlers({ patientService, appointmentService, callLog
     }
   }
 
+  /**
+   * Server-side access control for existing records. A call may only read or
+   * change a patient it registered itself or verified by date of birth, so a
+   * manipulated model (prompt injection) still can't touch other records.
+   */
+  async function mayAccess(ctx, patientId) {
+    if (!ctx.callId || !patientId) return false;
+    const access = await callLogService.getCallAccess(ctx.callId);
+    return patientId === access.registeredPatientId || patientId === access.verifiedPatientId;
+  }
+
   /** Best-effort call-log write: bookkeeping must never break the conversation. */
   async function safely(label, fn) {
     try {
@@ -77,14 +98,60 @@ export function createToolHandlers({ patientService, appointmentService, callLog
         const matches = await patientService.findByPhone(value.phone_number);
         if (matches.length === 0) return { found: false };
 
-        const [patient] = matches;
+        // Data minimization: only enough to ask "is this you?". The rest of the
+        // record is released by verify_patient_identity after a DOB match.
+        const [match] = matches;
         return {
           found: true,
-          patient,
-          other_patients_with_this_phone: matches.slice(1).map((p) => `${p.first_name} ${p.last_name}`),
+          patient: { patient_id: match.patient_id, first_name: match.first_name, last_name: match.last_name },
+          other_patients_with_this_phone: matches.slice(1).map((p) => ({ patient_id: p.patient_id, first_name: p.first_name, last_name: p.last_name })),
           next_step:
             'Ask: "It looks like we already have a record for [first name] [last name]. Would you like to update your information instead?" ' +
-            'Verify date of birth before revealing or changing any other details.',
+            'If yes, ask for their date of birth and call verify_patient_identity. You do not have any other details of this record yet.',
+        };
+      });
+    },
+
+    async verify_patient_identity(args, ctx) {
+      return guarded('verify_patient_identity', async () => {
+        const access = await callLogService.getCallAccess(ctx.callId);
+        if (access.verifiedPatientId && access.verifiedPatientId === args.patient_id) {
+          return { verified: true, patient: await patientService.get(args.patient_id) };
+        }
+        if (access.identityAttempts >= MAX_IDENTITY_ATTEMPTS) {
+          return {
+            verified: false,
+            locked: true,
+            next_step:
+              'Too many attempts. Do not reveal or change this record. Offer to register them as a new patient, or say the clinic team can help them with their existing record.',
+          };
+        }
+
+        const attempts = access.identityAttempts + 1;
+        const given = parseDateOfBirth(args.date_of_birth ?? '');
+        const patient = await patientService.get(args.patient_id);
+        const matches = Boolean(given) && formatDateOfBirth(given) === patient.date_of_birth;
+
+        await callLogService.recordIdentityAttempt(ctx.callId, {
+          callerNumber: ctx.callerNumber,
+          attempts,
+          verifiedPatientId: matches ? patient.patient_id : undefined,
+        });
+        logger.info('voice.identity.verification', { call_id: ctx.callId, patient_id: patient.patient_id, verified: matches, attempts });
+
+        if (matches) {
+          return {
+            verified: true,
+            patient,
+            next_step: 'Identity confirmed. Ask what they would like to update; you may now read back details from this record.',
+          };
+        }
+        // Never reveal the DOB on file or which part was wrong.
+        return {
+          verified: false,
+          attempts_remaining: MAX_IDENTITY_ATTEMPTS - attempts,
+          next_step:
+            'The date of birth does not match. Do not reveal anything from the record. Ask them to double-check it, or offer to register as a new patient.',
         };
       });
     },
@@ -116,7 +183,7 @@ export function createToolHandlers({ patientService, appointmentService, callLog
 
         // Idempotency: if this call already created a patient (e.g. the model
         // retried after a timeout), update that record instead of duplicating it.
-        const alreadyCreatedId = await callLogService.getPatientIdForCall(ctx.callId).catch(() => null);
+        const alreadyCreatedId = await callLogService.getRegisteredPatientIdForCall(ctx.callId).catch(() => null);
         if (alreadyCreatedId) {
           const patient = await patientService.update(alreadyCreatedId, fields, { source: 'voice' });
           return { success: true, patient_id: patient.patient_id, first_name: patient.first_name, note: 'Record was already saved on this call; it has been updated.' };
@@ -153,6 +220,7 @@ export function createToolHandlers({ patientService, appointmentService, callLog
 
     async update_patient(args, ctx) {
       return guarded('update_patient', async () => {
+        if (!(await mayAccess(ctx, args.patient_id))) return NOT_VERIFIED_RESULT;
         const fields = pickPatientFields(args);
         const patient = await patientService.update(args.patient_id, fields, { source: 'voice' });
         logger.info('voice.update.final_payload', { call_id: ctx.callId, changed_fields: Object.keys(fields), payload: patient });
@@ -178,6 +246,7 @@ export function createToolHandlers({ patientService, appointmentService, callLog
 
     async book_appointment(args, ctx) {
       return guarded('book_appointment', async () => {
+        if (!(await mayAccess(ctx, args.patient_id))) return NOT_VERIFIED_RESULT;
         const appointment = await appointmentService.book({
           patient_id: args.patient_id,
           start_time: args.start_time,

@@ -100,6 +100,11 @@ CREATE TABLE IF NOT EXISTS call_logs (
   updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
+-- Identity verification for returning callers: which patient this call proved
+-- it is (by date of birth) and how many attempts it has used (max 3).
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS verified_patient_id UUID REFERENCES patients (patient_id);
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS identity_attempts   INTEGER NOT NULL DEFAULT 0 CHECK (identity_attempts >= 0);
+
 -- Archived copy of the call recording in our private Vercel Blob store.
 ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS recording_blob_path    TEXT;
 ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS recording_content_type VARCHAR(100);

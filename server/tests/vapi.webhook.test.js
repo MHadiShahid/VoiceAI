@@ -108,6 +108,11 @@ describe('duplicate detection', () => {
     expect(result.next_step).toMatch(/already have a record/);
   });
 
+  it('check_existing_patient reveals only the name until identity is verified', async () => {
+    const { patient } = await callTool('check_existing_patient', { phone_number: '4155550134' }, { call: { id: 'call-min' } });
+    expect(Object.keys(patient).sort()).toEqual(['first_name', 'last_name', 'patient_id']);
+  });
+
   it('check_existing_patient returns found=false for new numbers', async () => {
     expect(await callTool('check_existing_patient', { phone_number: '2125550111' }, { call: { id: 'call-3' } })).toEqual({ found: false });
   });
@@ -121,8 +126,65 @@ describe('duplicate detection', () => {
     expect(allowed.success).toBe(true);
   });
 
-  it('update_patient applies only the changed fields', async () => {
+  it('verify_patient_identity releases the record only for the correct DOB, without leaking it', async () => {
+    const call = { id: 'call-v' };
+    const { patient } = await callTool('check_existing_patient', { phone_number: '4155550134' }, { call });
+
+    const wrong = await callTool('verify_patient_identity', { patient_id: patient.patient_id, date_of_birth: '01/01/1990' }, { call });
+    expect(wrong).toMatchObject({ verified: false, attempts_remaining: 2 });
+    expect(JSON.stringify(wrong)).not.toMatch(/1988|Evergreen|04\/12/); // nothing from the record
+
+    const right = await callTool('verify_patient_identity', { patient_id: patient.patient_id, date_of_birth: '1988-04-12' }, { call });
+    expect(right.verified).toBe(true);
+    expect(right.patient).toMatchObject({ address_line_1: '742 Evergreen Terrace', date_of_birth: '04/12/1988' });
+    expect(repositories._stores.callLogs.get('call-v')).toMatchObject({ verified_patient_id: patient.patient_id, identity_attempts: 2 });
+  });
+
+  it('locks verification after 3 failed attempts in a call', async () => {
+    const call = { id: 'call-lock' };
+    const { patient } = await callTool('check_existing_patient', { phone_number: '4155550134' }, { call });
+    for (const dob of ['01/01/1990', '02/02/1991', '03/03/1992']) {
+      await callTool('verify_patient_identity', { patient_id: patient.patient_id, date_of_birth: dob }, { call });
+    }
+    // Even the correct DOB is refused once locked.
+    const locked = await callTool('verify_patient_identity', { patient_id: patient.patient_id, date_of_birth: '04/12/1988' }, { call });
+    expect(locked).toMatchObject({ verified: false, locked: true });
+    expect(locked.patient).toBeUndefined();
+  });
+
+  it('server refuses updates and bookings for an unverified patient (prompt-injection guard)', async () => {
+    const call = { id: 'call-inject' };
+    const { patient } = await callTool('check_existing_patient', { phone_number: '4155550134' }, { call });
+    const update = await callTool('update_patient', { patient_id: patient.patient_id, city: 'Hacked' }, { call });
+    expect(update).toMatchObject({ success: false, error_type: 'not_verified' });
+    const booking = await callTool(
+      'book_appointment',
+      { patient_id: patient.patient_id, start_time: '2026-11-03T14:00:00.000Z', provider_name: 'Dr. Sarah Chen' },
+      { call },
+    );
+    expect(booking).toMatchObject({ success: false, error_type: 'not_verified' });
+    expect((await request(app).get(`/api/patients/${patient.patient_id}`)).body.data.city).toBe('San Francisco');
+
+    // Verification on a *different* call doesn't carry over.
+    await callTool('verify_patient_identity', { patient_id: patient.patient_id, date_of_birth: '04/12/1988' }, { call: { id: 'other-call' } });
+    expect(await callTool('update_patient', { patient_id: patient.patient_id, city: 'Hacked' }, { call })).toMatchObject({ error_type: 'not_verified' });
+  });
+
+  it('a call that updated its caller and then registers someone else creates a new record', async () => {
+    const call = { id: 'call-family' };
+    const { patient } = await callTool('check_existing_patient', { phone_number: '4155550134' }, { call });
+    await callTool('verify_patient_identity', { patient_id: patient.patient_id, date_of_birth: '04/12/1988' }, { call });
+    await callTool('update_patient', { patient_id: patient.patient_id, city: 'Oakland' }, { call });
+
+    const child = await callTool('register_patient', { ...validPatient(), first_name: 'Jimmy', allow_duplicate_phone: true }, { call });
+    expect(child.success).toBe(true);
+    expect(child.patient_id).not.toBe(patient.patient_id);
+    expect((await request(app).get(`/api/patients/${patient.patient_id}`)).body.data.first_name).toBe('Jane');
+  });
+
+  it('update_patient applies only the changed fields after verification', async () => {
     const { patient } = await callTool('check_existing_patient', { phone_number: '4155550134' }, { call: { id: 'call-5' } });
+    await callTool('verify_patient_identity', { patient_id: patient.patient_id, date_of_birth: '04/12/1988' }, { call: { id: 'call-5' } });
     const result = await callTool('update_patient', { patient_id: patient.patient_id, city: 'Oakland', zip_code: '94612' }, { call: { id: 'call-5' } });
     expect(result).toMatchObject({ success: true, updated_fields: ['city', 'zip_code'] });
     const updated = (await request(app).get(`/api/patients/${patient.patient_id}`)).body.data;
@@ -130,8 +192,8 @@ describe('duplicate detection', () => {
     expect(repositories._stores.callLogs.get('call-5').outcome).toBe('updated');
   });
 
-  it('update_patient reports not_found for an unknown patient', async () => {
-    const result = await callTool('update_patient', { patient_id: '00000000-0000-4000-8000-000000000000', city: 'Oakland' });
+  it('verify_patient_identity reports not_found for an unknown patient', async () => {
+    const result = await callTool('verify_patient_identity', { patient_id: '00000000-0000-4000-8000-000000000000', date_of_birth: '04/12/1988' });
     expect(result).toMatchObject({ success: false, error_type: 'not_found' });
   });
 });
@@ -217,7 +279,7 @@ describe('assistant config', () => {
     const cfg = buildAssistantConfig({ serverUrl: 'https://example.com/api/vapi/webhook', webhookSecret: 's3cret' });
     expect(cfg.model.provider).toBe('google');
     expect(cfg.model.tools.map((t) => t.function?.name ?? t.type)).toEqual([
-      'check_existing_patient', 'validate_patient_info', 'register_patient', 'update_patient',
+      'check_existing_patient', 'verify_patient_identity', 'validate_patient_info', 'register_patient', 'update_patient',
       'get_available_appointments', 'book_appointment', 'endCall',
     ]);
     expect(cfg.server.headers['x-vapi-secret']).toBe('s3cret');
